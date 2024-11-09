@@ -103,16 +103,19 @@ func main() {
 	conn, err := l.Accept()
 	if err != nil {
 		fmt.Println("Error accepting connection: ", err.Error())
-		os.Exit(1)
 	}
 	parser := NewParser(conn)
-	buff, err := parser.Parse()
-	if err != nil {
-		fmt.Println("Error accepting connection: ", err.Error())
-		os.Exit(1)
+	for {
+
+		buff, err := parser.Parse()
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			panic("Error parsing : " + err.Error())
+		}
+		if len(buff) > 0 && buff[0] == "PING" {
+			conn.Write([]byte("+PONG\r\n"))
+		}
 	}
-	if buff[0] == "PING" {
-		conn.Write([]byte("+PONG\r\n"))
-	}
-	fmt.Println(buff)
 }
