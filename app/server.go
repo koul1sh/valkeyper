@@ -98,8 +98,17 @@ func handleConnection(conn net.Conn) {
 			}
 			panic("Error parsing : " + err.Error())
 		}
-		if len(buff) > 0 && buff[0] == "PING" {
-			conn.Write([]byte("+PONG\r\n"))
+		if len(buff) > 0 {
+			switch buff[0] {
+			case "PING":
+				conn.Write([]byte("+PONG\r\n"))
+			case "ECHO":
+				msg := buff[1]
+				res := fmt.Sprintf("$3\r\n%s\r\n", msg)
+
+				conn.Write([]byte(res))
+			}
+
 		}
 	}
 }
