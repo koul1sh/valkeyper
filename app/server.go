@@ -104,7 +104,7 @@ func handleConnection(conn net.Conn) {
 				conn.Write([]byte("+PONG\r\n"))
 			case "ECHO":
 				msg := buff[1]
-				res := fmt.Sprintf("$3\r\n%s\r\n", msg)
+				res := fmt.Sprintf("$%d\r\n%s\r\n", len(msg), msg)
 
 				conn.Write([]byte(res))
 			}
