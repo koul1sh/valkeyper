@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"strconv"
+	"time"
 )
 
 type KVStore struct {
@@ -17,6 +18,11 @@ func NewKVStore() *KVStore {
 	return &KVStore{
 		store: make(map[string]string),
 	}
+}
+
+func (kv *KVStore) handleExpiry(timeout <-chan time.Time, key string) {
+	<-timeout
+	delete(kv.store, key)
 }
 
 func (kv *KVStore) handleConnection(conn net.Conn) {
@@ -42,6 +48,16 @@ func (kv *KVStore) handleConnection(conn net.Conn) {
 			case "SET":
 				key := buff[1]
 				val := buff[2]
+				if len(buff) > 4 {
+					ex, err := strconv.Atoi(buff[4])
+					if err != nil {
+						panic(err)
+					}
+					timeout := time.After(time.Duration(ex) * time.Millisecond)
+					go kv.handleExpiry(timeout, key)
+
+				}
+
 				kv.store[key] = val
 				conn.Write([]byte("+OK\r\n"))
 			case "GET":
