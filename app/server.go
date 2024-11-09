@@ -9,6 +9,63 @@ import (
 	"strconv"
 )
 
+type KVStore struct {
+	store map[string]string
+}
+
+func NewKVStore() *KVStore {
+	return &KVStore{
+		store: make(map[string]string),
+	}
+}
+
+func (kv *KVStore) handleConnection(conn net.Conn) {
+	fmt.Println(conn.RemoteAddr().String())
+	parser := NewParser(conn)
+	for {
+		buff, err := parser.Parse()
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			panic("Error parsing : " + err.Error())
+		}
+		if len(buff) > 0 {
+			switch buff[0] {
+			case "PING":
+				conn.Write([]byte("+PONG\r\n"))
+			case "ECHO":
+				msg := buff[1]
+				res := fmt.Sprintf("$%d\r\n%s\r\n", len(msg), msg)
+
+				conn.Write([]byte(res))
+			case "SET":
+				key := buff[1]
+				val := buff[2]
+				kv.store[key] = val
+				conn.Write([]byte("+OK\r\n"))
+			case "GET":
+				key := buff[1]
+				val, ok := kv.store[key]
+				var res string
+				if !ok {
+					res = "$-1\r\n"
+				} else {
+					res = fmt.Sprintf("$%d\r\n%s\r\n", len(val), val)
+				}
+				conn.Write([]byte(res))
+			}
+
+		}
+	}
+}
+func (kv *KVStore) handleConections(connections chan net.Conn) {
+	for {
+		conn := <-connections
+		go kv.handleConnection(conn)
+	}
+}
+
 type Parser struct {
 	bufio.Reader
 }
@@ -87,41 +144,10 @@ func (p *Parser) Parse() ([]string, error) {
 	return res, nil
 }
 
-func handleConnection(conn net.Conn) {
-	fmt.Println(conn.RemoteAddr().String())
-	parser := NewParser(conn)
-	for {
-		buff, err := parser.Parse()
-		if err != nil {
-			if err == io.EOF {
-				break
-			}
-			panic("Error parsing : " + err.Error())
-		}
-		if len(buff) > 0 {
-			switch buff[0] {
-			case "PING":
-				conn.Write([]byte("+PONG\r\n"))
-			case "ECHO":
-				msg := buff[1]
-				res := fmt.Sprintf("$%d\r\n%s\r\n", len(msg), msg)
-
-				conn.Write([]byte(res))
-			}
-
-		}
-	}
-}
-
-func handleConections(connections chan net.Conn) {
-	for {
-		conn := <-connections
-		go handleConnection(conn)
-	}
-}
-
 func main() {
 	fmt.Println("Logs from your program will appear here!")
+
+	kvStore := NewKVStore()
 
 	l, err := net.Listen("tcp", "0.0.0.0:6379")
 	if err != nil {
@@ -129,7 +155,7 @@ func main() {
 		os.Exit(1)
 	}
 	connections := make(chan net.Conn)
-	go handleConections(connections)
+	go kvStore.handleConections(connections)
 	for {
 		conn, err := l.Accept()
 		if err != nil {
