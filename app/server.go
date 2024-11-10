@@ -36,6 +36,7 @@ func (kv *KVStore) handleConnection(conn net.Conn) {
 			}
 			panic("Error parsing : " + err.Error())
 		}
+		fmt.Println("buff", buff)
 		if len(buff) > 0 {
 			switch buff[0] {
 			case "PING":
@@ -48,6 +49,7 @@ func (kv *KVStore) handleConnection(conn net.Conn) {
 			case "SET":
 				key := buff[1]
 				val := buff[2]
+				fmt.Println("key-val ", key, val)
 				if len(buff) > 4 {
 					ex, err := strconv.Atoi(buff[4])
 					if err != nil {
@@ -59,6 +61,7 @@ func (kv *KVStore) handleConnection(conn net.Conn) {
 				}
 
 				kv.store[key] = val
+				fmt.Println(kv.store)
 				conn.Write([]byte("+OK\r\n"))
 			case "GET":
 				key := buff[1]
