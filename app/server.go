@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -26,7 +27,6 @@ func (kv *KVStore) handleExpiry(timeout <-chan time.Time, key string) {
 }
 
 func (kv *KVStore) handleConnection(conn net.Conn) {
-	fmt.Println(conn.RemoteAddr().String())
 	parser := NewParser(conn)
 	for {
 		buff, err := parser.Parse()
@@ -36,7 +36,6 @@ func (kv *KVStore) handleConnection(conn net.Conn) {
 			}
 			panic("Error parsing : " + err.Error())
 		}
-		fmt.Println("buff", buff)
 		if len(buff) > 0 {
 			switch buff[0] {
 			case "PING":
@@ -49,7 +48,6 @@ func (kv *KVStore) handleConnection(conn net.Conn) {
 			case "SET":
 				key := buff[1]
 				val := buff[2]
-				fmt.Println("key-val ", key, val)
 				if len(buff) > 4 {
 					ex, err := strconv.Atoi(buff[4])
 					if err != nil {
@@ -61,7 +59,6 @@ func (kv *KVStore) handleConnection(conn net.Conn) {
 				}
 
 				kv.store[key] = val
-				fmt.Println(kv.store)
 				conn.Write([]byte("+OK\r\n"))
 			case "GET":
 				key := buff[1]
@@ -73,11 +70,46 @@ func (kv *KVStore) handleConnection(conn net.Conn) {
 					res = fmt.Sprintf("$%d\r\n%s\r\n", len(val), val)
 				}
 				conn.Write([]byte(res))
+			case "CONFIG":
+				if len(buff) > 2 && buff[1] == "GET" {
+					key := buff[2]
+					file, err := os.Open("redis.conf")
+					if err != nil {
+						panic(err)
+					}
+					defer file.Close()
+					b := bufio.NewReader(file)
+					for {
+						line, _, err := b.ReadLine()
+						if err != nil {
+							panic(err)
+						}
+						pair := strings.Split(string(line), " ")
+
+						if pair[0] == key {
+							res := toArray(pair)
+							fmt.Println(string(res))
+							conn.Write(res)
+							break
+						}
+					}
+				}
 			}
 
 		}
 	}
 }
+
+func toArray(arr []string) []byte {
+	sb := strings.Builder{}
+	tmp := fmt.Sprintf("*%d\r\n", len(arr))
+	sb.WriteString(tmp)
+	for _, ele := range arr {
+		sb.WriteString(fmt.Sprintf("$%d\r\n%s\r\n", len(ele), ele))
+	}
+	return []byte(sb.String())
+}
+
 func (kv *KVStore) handleConections(connections chan net.Conn) {
 	for {
 		conn := <-connections
@@ -89,17 +121,39 @@ type Parser struct {
 	bufio.Reader
 }
 
+func (p *Parser) getLength() (int, error) {
+	buff := strings.Builder{}
+	for {
+		chr, err := p.ReadByte()
+		if err != nil {
+			return -1, err
+		}
+		if chr == '\r' {
+			p.UnreadByte()
+			break
+		}
+		err = buff.WriteByte(chr)
+		if err != nil {
+			return -1, err
+		}
+	}
+	res, err := strconv.Atoi(buff.String())
+	if err != nil {
+		return -1, err
+	}
+	return res, nil
+}
+
 func NewParser(rdr io.Reader) *Parser {
 	return &Parser{
 		*bufio.NewReader(rdr),
 	}
 }
 func (p *Parser) ParseBulkString() ([]byte, error) {
-	byt, err := p.ReadByte()
+	length, err := p.getLength()
 	if err != nil {
 		return nil, err
 	}
-	length, _ := strconv.Atoi(string(byt))
 	crlf := make([]byte, 2)
 	_, err = io.ReadFull(p, crlf)
 	if err != nil {
@@ -117,11 +171,7 @@ func (p *Parser) ParseBulkString() ([]byte, error) {
 }
 
 func (p *Parser) ParseArray() ([]string, error) {
-	byt, err := p.ReadByte()
-	if err != nil {
-		return nil, err
-	}
-	length, err := strconv.Atoi(string(byt))
+	length, err := p.getLength()
 	if err != nil {
 		return nil, err
 	}
@@ -167,12 +217,30 @@ func main() {
 	fmt.Println("Logs from your program will appear here!")
 
 	kvStore := NewKVStore()
-
+	var dir string
+	var dbfile string
+	if len(os.Args) > 3 && os.Args[1] == "--dir" {
+		dir = os.Args[2]
+	}
+	if len(os.Args) > 4 && os.Args[3] == "--dbfilename" {
+		dbfile = os.Args[4]
+	}
+	file, err := os.OpenFile("redis.conf", os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		panic(err)
+	}
+	defer file.Close()
+	_, err = file.WriteString(fmt.Sprintf("dir %s\n", dir))
+	if err != nil {
+		panic(err)
+	}
+	file.WriteString(fmt.Sprintf("dbfilename %s\n", dbfile))
 	l, err := net.Listen("tcp", "0.0.0.0:6379")
 	if err != nil {
 		fmt.Println("Failed to bind to port 6379")
 		os.Exit(1)
 	}
+
 	connections := make(chan net.Conn)
 	go kvStore.handleConections(connections)
 	for {
