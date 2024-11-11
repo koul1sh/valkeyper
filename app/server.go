@@ -2,10 +2,12 @@ package main
 
 import (
 	"bufio"
+	"encoding/binary"
 	"fmt"
 	"io"
 	"net"
 	"os"
+	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -71,33 +73,246 @@ func (kv *KVStore) handleConnection(conn net.Conn) {
 				}
 				conn.Write([]byte(res))
 			case "CONFIG":
+				config := NewConfig("redis.conf")
+				config.marshal()
 				if len(buff) > 2 && buff[1] == "GET" {
 					key := buff[2]
-					file, err := os.Open("redis.conf")
-					if err != nil {
-						panic(err)
+					val, ok := config.pair[key]
+					if ok {
+						conn.Write(toArray([]string{key, val}))
+					} else {
+						fmt.Println("key not found in config")
 					}
-					defer file.Close()
-					b := bufio.NewReader(file)
-					for {
-						line, _, err := b.ReadLine()
-						if err != nil {
-							panic(err)
-						}
-						pair := strings.Split(string(line), " ")
 
-						if pair[0] == key {
-							res := toArray(pair)
-							fmt.Println(string(res))
-							conn.Write(res)
-							break
-						}
-					}
 				}
+			case "KEYS":
+				config := NewConfig("redis.conf")
+				config.marshal()
+				fmt.Println(config.pair)
+				dir := config.get("dir")
+				file := config.get("dbfilename")
+
+				rdb := NewRDB(path.Join(dir, file))
+				err = rdb.Parse()
+				if err != nil {
+					panic(err)
+				}
+				keys := []string{}
+				for k := range rdb.dbs[0].dbStore {
+					keys = append(keys, k)
+				}
+				conn.Write(toArray(keys))
+
 			}
 
 		}
 	}
+}
+
+var OP_CODES = []string{"FF", "FE", "FD", "FC", "FB", "FA"}
+
+type Database struct {
+	index   int
+	size    int
+	expiry  int
+	dbStore map[string]string
+}
+
+type RDB struct {
+	reader  bufio.Reader
+	version int
+	aux     map[string]string
+	dbs     []Database
+}
+
+func NewRDB(file string) *RDB {
+	fd, err := os.Open(file)
+	if err != nil {
+		panic(err)
+	}
+	return &RDB{
+		reader: *bufio.NewReader(fd),
+		aux:    make(map[string]string),
+	}
+}
+func (rdb *RDB) ParseLength() (int, bool, error) {
+
+	var length int
+	var isInt bool = false
+	firstByte, err := rdb.reader.ReadByte()
+	if err != nil {
+		return -1, isInt, err
+	}
+	bitRep := fmt.Sprintf("%08b", firstByte)
+	switch bitRep[:2] {
+	case "00":
+		length = int(firstByte)
+	case "01":
+		nextByte, err := rdb.reader.ReadByte()
+		if err != nil {
+			return -1, isInt, err
+		}
+		lastN := firstByte & 0b00111111
+
+		merged := uint16(lastN)<<8 | uint16(nextByte)
+		fmt.Println("merged", merged)
+		length = int(merged)
+
+	case "11":
+		mask := byte(1<<6 - 1)
+		flag := int(firstByte & mask)
+		if flag == 0 {
+			length = 1
+		} else if flag == 1 {
+			length = 2
+		} else if flag == 2 {
+			length = 4
+		}
+		isInt = true
+	default:
+		return -1, isInt, fmt.Errorf("not 00")
+	}
+	return length, isInt, nil
+}
+
+func (rdb *RDB) ParseString() (string, error) {
+	length, isInt, err := rdb.ParseLength()
+	if err != nil {
+		return "", nil
+	}
+	res := make([]byte, length)
+	_, err = io.ReadFull(&rdb.reader, res)
+	if err != nil {
+		return "", err
+	}
+	if isInt {
+		conv, err := binary.Varint(res)
+		if err == 0 {
+			return "", fmt.Errorf("something went wrong")
+		}
+		return strconv.Itoa(int(conv)), nil
+	}
+	return string(res), nil
+}
+
+func (rdb *RDB) ParseAux() error {
+
+	byt, _ := rdb.reader.ReadByte()
+	fmt.Println(byt)
+	flg := fmt.Sprintf("%X", byt)
+	if flg != "FA" {
+		rdb.reader.UnreadByte()
+		return fmt.Errorf("not aux")
+	}
+	key, err := rdb.ParseString()
+	if err != nil {
+		return err
+	}
+	val, err := rdb.ParseString()
+	if err != nil {
+		return err
+	}
+	rdb.aux[key] = val
+	return rdb.ParseAux()
+}
+
+func (rdb *RDB) ParseSelectDB() error {
+	byt, err := rdb.reader.ReadByte()
+	if err != nil {
+		return err
+	}
+	flg := fmt.Sprintf("%X", byt)
+	if flg != "FE" {
+		rdb.reader.UnreadByte()
+		return fmt.Errorf("not FE")
+	}
+	dbIdx, _, err := rdb.ParseLength()
+	if err != nil {
+		return err
+	}
+	db := Database{
+		index:   dbIdx,
+		dbStore: make(map[string]string),
+	}
+	rdb.dbs = append(rdb.dbs, db)
+	rdb.reader.ReadByte()
+	dbLen, _, err := rdb.ParseLength()
+	if err != nil {
+		return err
+	}
+	dbExp, _, err := rdb.ParseLength()
+	if err != nil {
+		return err
+	}
+	rdb.dbs[dbIdx].size = dbLen
+	rdb.dbs[dbIdx].expiry = dbExp
+	fmt.Println(rdb.dbs[dbIdx])
+	err = rdb.ParseSelectDB()
+	if err != nil && err.Error() != "not FE" {
+		return err
+	}
+	//load key value
+	err = rdb.ParseKeyValue(dbIdx)
+	fmt.Println(rdb.dbs[dbIdx].dbStore)
+	return err
+}
+
+func (rdb *RDB) ParseKeyValue(dbIdx int) error {
+	byt, err := rdb.reader.ReadByte()
+	if err != nil {
+		return err
+	}
+	if byt == 0 {
+		key, err := rdb.ParseString()
+		if err != nil {
+			return err
+		}
+		val, err := rdb.ParseString()
+		if err != nil {
+			return err
+		}
+		rdb.dbs[dbIdx].dbStore[key] = val
+	}
+	return nil
+}
+
+func (rdb *RDB) Parse() error {
+
+	buff := make([]byte, 5)
+	rdb.reader.Read(buff)
+	if string(buff) != "REDIS" {
+		return fmt.Errorf("not a rdb file")
+	}
+	rdb.reader.Read(buff[:4])
+	num, err := strconv.Atoi(string(buff[:4]))
+	if err != nil {
+		panic(err)
+	}
+	rdb.version = num
+	err = rdb.ParseAux()
+	if err.Error() != "not aux" {
+		return err
+	}
+	err = rdb.ParseSelectDB()
+
+	if err != nil && err.Error() != "not FE" {
+		return err
+	}
+	byt, err := rdb.reader.ReadByte()
+	if err != nil {
+		return err
+	}
+
+	flg := fmt.Sprintf("%X", byt)
+	if flg == "FF" {
+		fmt.Println("rdb file parsing complete")
+		return nil
+	}
+	// read key value
+	mk := make([]byte, 1024)
+	n, _ := rdb.reader.Read(mk)
+	fmt.Println(mk[:n])
+	return nil
 }
 
 func toArray(arr []string) []byte {
@@ -119,6 +334,52 @@ func (kv *KVStore) handleConections(connections chan net.Conn) {
 
 type Parser struct {
 	bufio.Reader
+}
+
+type Config struct {
+	file string
+	pair map[string]string
+}
+
+func NewConfig(file string) *Config {
+	return &Config{
+		file: file,
+		pair: make(map[string]string),
+	}
+}
+
+func (c *Config) get(key string) string {
+	return c.pair[key]
+}
+
+func (c *Config) marshal() {
+
+	file, err := os.Open(c.file)
+	if err != nil {
+		panic(err)
+	}
+	defer file.Close()
+	b := bufio.NewReader(file)
+	for {
+		line, _, err := b.ReadLine()
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			panic(err)
+		}
+		pair := strings.Split(string(line), " ")
+		c.pair[pair[0]] = pair[len(pair)-1]
+	}
+}
+
+func (c *Config) getKeys() []string {
+
+	res := []string{}
+	for k := range c.pair {
+		res = append(res, k)
+	}
+	return res
 }
 
 func (p *Parser) getLength() (int, error) {
@@ -225,16 +486,16 @@ func main() {
 	if len(os.Args) > 4 && os.Args[3] == "--dbfilename" {
 		dbfile = os.Args[4]
 	}
-	file, err := os.OpenFile("redis.conf", os.O_CREATE|os.O_WRONLY, 0644)
+	file, err := os.OpenFile("redis.conf", os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0644)
 	if err != nil {
 		panic(err)
 	}
-	defer file.Close()
 	_, err = file.WriteString(fmt.Sprintf("dir %s\n", dir))
 	if err != nil {
 		panic(err)
 	}
 	file.WriteString(fmt.Sprintf("dbfilename %s\n", dbfile))
+	file.Close()
 	l, err := net.Listen("tcp", "0.0.0.0:6379")
 	if err != nil {
 		fmt.Println("Failed to bind to port 6379")
