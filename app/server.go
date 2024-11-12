@@ -187,7 +187,6 @@ func (rdb *RDB) ParseString() (string, error) {
 func (rdb *RDB) ParseAux() error {
 
 	byt, _ := rdb.reader.ReadByte()
-	fmt.Println(byt)
 	flg := fmt.Sprintf("%X", byt)
 	if flg != "FA" {
 		rdb.reader.UnreadByte()
@@ -235,14 +234,23 @@ func (rdb *RDB) ParseSelectDB() error {
 	}
 	rdb.dbs[dbIdx].size = dbLen
 	rdb.dbs[dbIdx].expiry = dbExp
-	fmt.Println(rdb.dbs[dbIdx])
 	err = rdb.ParseSelectDB()
 	if err != nil && err.Error() != "not FE" {
 		return err
 	}
 	//load key value
-	err = rdb.ParseKeyValue(dbIdx)
-	fmt.Println(rdb.dbs[dbIdx].dbStore)
+	for {
+		byt, err := rdb.reader.ReadByte()
+		if err != nil {
+			return err
+		}
+		if byt == 0 {
+			rdb.reader.UnreadByte()
+			err = rdb.ParseKeyValue(dbIdx)
+		} else {
+			break
+		}
+	}
 	return err
 }
 
@@ -261,6 +269,9 @@ func (rdb *RDB) ParseKeyValue(dbIdx int) error {
 			return err
 		}
 		rdb.dbs[dbIdx].dbStore[key] = val
+		return rdb.ParseKeyValue(dbIdx)
+	} else {
+		return fmt.Errorf("not kv string")
 	}
 	return nil
 }
@@ -297,10 +308,6 @@ func (rdb *RDB) Parse() error {
 		fmt.Println("rdb file parsing complete")
 		return nil
 	}
-	// read key value
-	mk := make([]byte, 1024)
-	n, _ := rdb.reader.Read(mk)
-	fmt.Println(mk[:n])
 	return nil
 }
 
@@ -490,6 +497,8 @@ func main() {
 				panic(err)
 			}
 			kvStore.store = rdb.dbs[0].dbStore
+		} else {
+			fmt.Println(err)
 		}
 	}
 
