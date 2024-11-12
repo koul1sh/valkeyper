@@ -86,23 +86,12 @@ func (kv *KVStore) handleConnection(conn net.Conn) {
 
 				}
 			case "KEYS":
-				config := NewConfig("redis.conf")
-				config.marshal()
-				fmt.Println(config.pair)
-				dir := config.get("dir")
-				file := config.get("dbfilename")
-
-				rdb := NewRDB(path.Join(dir, file))
-				err = rdb.Parse()
-				if err != nil {
-					panic(err)
-				}
 				keys := []string{}
-				for k := range rdb.dbs[0].dbStore {
+
+				for k := range kv.store {
 					keys = append(keys, k)
 				}
 				conn.Write(toArray(keys))
-
 			}
 
 		}
@@ -125,15 +114,15 @@ type RDB struct {
 	dbs     []Database
 }
 
-func NewRDB(file string) *RDB {
+func NewRDB(file string) (*RDB, error) {
 	fd, err := os.Open(file)
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
 	return &RDB{
 		reader: *bufio.NewReader(fd),
 		aux:    make(map[string]string),
-	}
+	}, nil
 }
 func (rdb *RDB) ParseLength() (int, bool, error) {
 
@@ -480,22 +469,30 @@ func main() {
 	kvStore := NewKVStore()
 	var dir string
 	var dbfile string
-	if len(os.Args) > 3 && os.Args[1] == "--dir" {
+	if len(os.Args) > 4 && os.Args[1] == "--dir" && os.Args[3] == "--dbfilename" {
 		dir = os.Args[2]
-	}
-	if len(os.Args) > 4 && os.Args[3] == "--dbfilename" {
 		dbfile = os.Args[4]
+		file, err := os.OpenFile("redis.conf", os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0644)
+		if err != nil {
+			panic(err)
+		}
+		_, err = file.WriteString(fmt.Sprintf("dir %s\n", dir))
+		if err != nil {
+			panic(err)
+		}
+		file.WriteString(fmt.Sprintf("dbfilename %s\n", dbfile))
+		file.Close()
+
+		rdb, err := NewRDB(path.Join(dir, dbfile))
+		if err == nil {
+			err = rdb.Parse()
+			if err != nil {
+				panic(err)
+			}
+			kvStore.store = rdb.dbs[0].dbStore
+		}
 	}
-	file, err := os.OpenFile("redis.conf", os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0644)
-	if err != nil {
-		panic(err)
-	}
-	_, err = file.WriteString(fmt.Sprintf("dir %s\n", dir))
-	if err != nil {
-		panic(err)
-	}
-	file.WriteString(fmt.Sprintf("dbfilename %s\n", dbfile))
-	file.Close()
+
 	l, err := net.Listen("tcp", "0.0.0.0:6379")
 	if err != nil {
 		fmt.Println("Failed to bind to port 6379")
