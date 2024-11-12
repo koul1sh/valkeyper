@@ -247,6 +247,9 @@ func (rdb *RDB) ParseSelectDB() error {
 		if byt == 0 {
 			rdb.reader.UnreadByte()
 			err = rdb.ParseKeyValue(dbIdx)
+			if err != nil && err.Error() != "not kv string" {
+				return err
+			}
 		} else {
 			break
 		}
@@ -273,7 +276,6 @@ func (rdb *RDB) ParseKeyValue(dbIdx int) error {
 	} else {
 		return fmt.Errorf("not kv string")
 	}
-	return nil
 }
 
 func (rdb *RDB) Parse() error {
@@ -344,9 +346,9 @@ func NewConfig(file string) *Config {
 	}
 }
 
-func (c *Config) get(key string) string {
-	return c.pair[key]
-}
+// func (c *Config) get(key string) string {
+// 	return c.pair[key]
+// }
 
 func (c *Config) marshal() {
 
@@ -367,15 +369,6 @@ func (c *Config) marshal() {
 		pair := strings.Split(string(line), " ")
 		c.pair[pair[0]] = pair[len(pair)-1]
 	}
-}
-
-func (c *Config) getKeys() []string {
-
-	res := []string{}
-	for k := range c.pair {
-		res = append(res, k)
-	}
-	return res
 }
 
 func (p *Parser) getLength() (int, error) {
