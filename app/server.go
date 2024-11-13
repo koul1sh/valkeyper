@@ -14,8 +14,9 @@ import (
 )
 
 type Info struct {
-	role      string
-	replicaOf string
+	role       string
+	masterIP   string
+	masterPort string
 }
 
 type KVStore struct {
@@ -549,7 +550,9 @@ func main() {
 	}
 	if len(os.Args) > 3 {
 		if os.Args[3] == "--replicaof" {
-			kvStore.info.replicaOf = os.Args[4]
+			master := strings.Split(os.Args[4], " ")
+			kvStore.info.masterIP = string(master[0])
+			kvStore.info.masterPort = string(master[1])
 			kvStore.info.role = "slave"
 		}
 	}
@@ -586,7 +589,14 @@ func main() {
 		fmt.Println("Failed to bind to port 6379")
 		os.Exit(1)
 	}
+	if kvStore.info.role == "slave" {
 
+		master, err := net.Dial("tcp", kvStore.info.masterIP+":"+kvStore.info.masterPort)
+		if err != nil {
+			panic(err)
+		}
+		master.Write([]byte(toArray([]string{"PING"})))
+	}
 	connections := make(chan net.Conn)
 	go kvStore.handleConections(connections)
 	for {
