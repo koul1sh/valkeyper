@@ -514,6 +514,10 @@ func main() {
 	kvStore := NewKVStore()
 	var dir string
 	var dbfile string
+	var port string = "6379"
+	if len(os.Args) > 1 && os.Args[1] == "--port" {
+		port = os.Args[2]
+	}
 	if len(os.Args) > 4 && os.Args[1] == "--dir" && os.Args[3] == "--dbfilename" {
 		dir = os.Args[2]
 		dbfile = os.Args[4]
@@ -541,7 +545,8 @@ func main() {
 		}
 	}
 
-	l, err := net.Listen("tcp", "0.0.0.0:6379")
+	addr := fmt.Sprintf("0.0.0.0:%s", port)
+	l, err := net.Listen("tcp", addr)
 	if err != nil {
 		fmt.Println("Failed to bind to port 6379")
 		os.Exit(1)
