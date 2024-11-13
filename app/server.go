@@ -18,9 +18,6 @@ type Info struct {
 	replicaOf string
 }
 
-func (info *Info) InfoIterate() {
-}
-
 type KVStore struct {
 	info  Info
 	store map[string]string
@@ -115,8 +112,12 @@ func (kv *KVStore) handleConnection(conn net.Conn) {
 				}
 				conn.Write(toArray(keys))
 			case "INFO":
-
-				conn.Write([]byte(toBulkString(fmt.Sprintf("role:%s", kv.info.role))))
+				res := []string{
+					fmt.Sprintf("role:%s", kv.info.role),
+					"master_replid:8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb",
+					"master_repl_offset:0",
+				}
+				conn.Write([]byte(toBulkFromArr(res)))
 			}
 
 		}
@@ -371,6 +372,17 @@ func (rdb *RDB) Parse() error {
 		return nil
 	}
 	return nil
+}
+func toBulkFromArr(arr []string) string {
+	total := 0
+	var buff string
+	for _, x := range arr {
+		buff += fmt.Sprintf("%s\r\n", x)
+		total += len(x) + 2
+	}
+	total -= 2
+	return fmt.Sprintf("$%d\r\n%s", total, buff)
+
 }
 func toBulkString(ele string) string {
 	return fmt.Sprintf("$%d\r\n%s\r\n", len(ele), ele)
