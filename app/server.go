@@ -102,6 +102,8 @@ func (kv *KVStore) handleConnection(conn net.Conn) {
 					keys = append(keys, k)
 				}
 				conn.Write(toArray(keys))
+			case "INFO":
+				conn.Write([]byte(toBulkString("role:master")))
 			}
 
 		}
@@ -357,13 +359,15 @@ func (rdb *RDB) Parse() error {
 	}
 	return nil
 }
-
+func toBulkString(ele string) string {
+	return fmt.Sprintf("$%d\r\n%s\r\n", len(ele), ele)
+}
 func toArray(arr []string) []byte {
 	sb := strings.Builder{}
 	tmp := fmt.Sprintf("*%d\r\n", len(arr))
 	sb.WriteString(tmp)
 	for _, ele := range arr {
-		sb.WriteString(fmt.Sprintf("$%d\r\n%s\r\n", len(ele), ele))
+		sb.WriteString(toBulkString(ele))
 	}
 	return []byte(sb.String())
 }
