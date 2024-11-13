@@ -595,7 +595,18 @@ func main() {
 		if err != nil {
 			panic(err)
 		}
-		master.Write([]byte(toArray([]string{"PING"})))
+		resp := make([]byte, 1024)
+		buff := []string{"PING"}
+		master.Write([]byte(toArray(buff)))
+		n, err := master.Read(resp)
+		if err != nil {
+			panic(err)
+		}
+		fmt.Println(resp[:n])
+		buff = []string{"REPLCONF", "listening-port", port}
+		master.Write([]byte(toArray(buff)))
+		buff = []string{"REPLCONF", "capa", "psync2"}
+		master.Write([]byte(toArray(buff)))
 	}
 	connections := make(chan net.Conn)
 	go kvStore.handleConections(connections)
