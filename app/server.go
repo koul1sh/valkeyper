@@ -13,12 +13,24 @@ import (
 	"time"
 )
 
+type Info struct {
+	role      string
+	replicaOf string
+}
+
+func (info *Info) InfoIterate() {
+}
+
 type KVStore struct {
+	info  Info
 	store map[string]string
 }
 
 func NewKVStore() *KVStore {
 	return &KVStore{
+		info: Info{
+			role: "master",
+		},
 		store: make(map[string]string),
 	}
 }
@@ -103,7 +115,8 @@ func (kv *KVStore) handleConnection(conn net.Conn) {
 				}
 				conn.Write(toArray(keys))
 			case "INFO":
-				conn.Write([]byte(toBulkString("role:master")))
+
+				conn.Write([]byte(toBulkString(fmt.Sprintf("role:%s", kv.info.role))))
 			}
 
 		}
@@ -521,6 +534,12 @@ func main() {
 	var port string = "6379"
 	if len(os.Args) > 1 && os.Args[1] == "--port" {
 		port = os.Args[2]
+	}
+	if len(os.Args) > 3 {
+		if os.Args[3] == "--replicaof" {
+			kvStore.info.replicaOf = os.Args[4]
+			kvStore.info.role = "slave"
+		}
 	}
 	if len(os.Args) > 4 && os.Args[1] == "--dir" && os.Args[3] == "--dbfilename" {
 		dir = os.Args[2]
