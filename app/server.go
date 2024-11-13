@@ -23,6 +23,16 @@ func NewKVStore() *KVStore {
 	}
 }
 
+func (kv *KVStore) loadFromRDB(rdb *RDB) {
+	kv.store = rdb.dbs[0].dbStore
+
+	for _, x := range rdb.dbs[0].expiryStore {
+		kv.store[x.key] = x.value
+		duration := time.Duration(int64(x.expiry)-time.Now().UnixMilli()) * time.Millisecond
+		go kv.handleExpiry(time.After(duration), x.key)
+	}
+}
+
 func (kv *KVStore) handleExpiry(timeout <-chan time.Time, key string) {
 	<-timeout
 	delete(kv.store, key)
@@ -101,10 +111,17 @@ func (kv *KVStore) handleConnection(conn net.Conn) {
 var OP_CODES = []string{"FF", "FE", "FD", "FC", "FB", "FA"}
 
 type Database struct {
-	index   int
-	size    int
-	expiry  int
-	dbStore map[string]string
+	index       int
+	size        int
+	expiry      int
+	dbStore     map[string]string
+	expiryStore []expiryEntry
+}
+
+type expiryEntry struct {
+	key    string
+	value  string
+	expiry uint64
 }
 
 type RDB struct {
@@ -201,7 +218,7 @@ func (rdb *RDB) ParseAux() error {
 		return err
 	}
 	rdb.aux[key] = val
-	return rdb.ParseAux()
+	return nil
 }
 
 func (rdb *RDB) ParseSelectDB() error {
@@ -219,11 +236,14 @@ func (rdb *RDB) ParseSelectDB() error {
 		return err
 	}
 	db := Database{
-		index:   dbIdx,
-		dbStore: make(map[string]string),
+		index:       dbIdx,
+		dbStore:     make(map[string]string),
+		expiryStore: []expiryEntry{},
 	}
 	rdb.dbs = append(rdb.dbs, db)
-	rdb.reader.ReadByte()
+
+	rdb.reader.ReadByte() // read FB
+
 	dbLen, _, err := rdb.ParseLength()
 	if err != nil {
 		return err
@@ -232,49 +252,64 @@ func (rdb *RDB) ParseSelectDB() error {
 	if err != nil {
 		return err
 	}
+
 	rdb.dbs[dbIdx].size = dbLen
 	rdb.dbs[dbIdx].expiry = dbExp
-	err = rdb.ParseSelectDB()
-	if err != nil && err.Error() != "not FE" {
-		return err
-	}
 	//load key value
 	for {
-		byt, err := rdb.reader.ReadByte()
-		if err != nil {
-			return err
-		}
-		if byt == 0 {
+		var expiry uint64
+		var hasExp bool = false
+		byt, _ = rdb.reader.ReadByte()
+		if fmt.Sprintf("%X", byt) == "FC" {
+			hasExp = true
+			buff := make([]byte, 8)
+			rdb.reader.Read(buff)
+
+			expiry = binary.LittleEndian.Uint64(buff)
+
+		} else {
 			rdb.reader.UnreadByte()
-			err = rdb.ParseKeyValue(dbIdx)
-			if err != nil && err.Error() != "not kv string" {
+		}
+		keyval, err := rdb.ParseKeyValue(dbIdx)
+
+		if err != nil {
+			if err.Error() == "not kv string" {
+				break
+			} else {
 				return err
 			}
+		}
+		if hasExp {
+			rdb.dbs[dbIdx].expiryStore = append(rdb.dbs[dbIdx].expiryStore, expiryEntry{
+				key:    keyval[0],
+				value:  keyval[1],
+				expiry: expiry,
+			})
 		} else {
-			break
+			rdb.dbs[dbIdx].dbStore[keyval[0]] = keyval[1]
 		}
 	}
-	return err
+	return nil
 }
 
-func (rdb *RDB) ParseKeyValue(dbIdx int) error {
+func (rdb *RDB) ParseKeyValue(dbIdx int) ([]string, error) {
 	byt, err := rdb.reader.ReadByte()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if byt == 0 {
 		key, err := rdb.ParseString()
 		if err != nil {
-			return err
+			return nil, err
 		}
 		val, err := rdb.ParseString()
 		if err != nil {
-			return err
+			return nil, err
 		}
-		rdb.dbs[dbIdx].dbStore[key] = val
-		return rdb.ParseKeyValue(dbIdx)
+		return []string{key, val}, nil
 	} else {
-		return fmt.Errorf("not kv string")
+		rdb.reader.UnreadByte()
+		return nil, fmt.Errorf("not kv string")
 	}
 }
 
@@ -291,15 +326,25 @@ func (rdb *RDB) Parse() error {
 		panic(err)
 	}
 	rdb.version = num
-	err = rdb.ParseAux()
-	if err.Error() != "not aux" {
-		return err
+	//parse Auxilary fields section
+	for {
+		err = rdb.ParseAux()
+		if err != nil && err.Error() == "not aux" {
+			break
+		}
 	}
-	err = rdb.ParseSelectDB()
+	//parse db section
+	for {
+		err = rdb.ParseSelectDB()
+		if err != nil {
+			if err.Error() == "not FE" {
+				break
+			} else {
+				return err
+			}
+		}
+	}
 
-	if err != nil && err.Error() != "not FE" {
-		return err
-	}
 	byt, err := rdb.reader.ReadByte()
 	if err != nil {
 		return err
@@ -489,7 +534,8 @@ func main() {
 			if err != nil {
 				panic(err)
 			}
-			kvStore.store = rdb.dbs[0].dbStore
+			kvStore.loadFromRDB(rdb)
+			fmt.Println(kvStore)
 		} else {
 			fmt.Println(err)
 		}
