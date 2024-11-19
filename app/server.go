@@ -119,6 +119,8 @@ func (kv *KVStore) handleConnection(conn net.Conn) {
 					"master_repl_offset:0",
 				}
 				conn.Write([]byte(toBulkFromArr(res)))
+			case "REPLCONF":
+				conn.Write([]byte("+OK\r\n"))
 			}
 
 		}
@@ -589,8 +591,8 @@ func main() {
 		fmt.Println("Failed to bind to port 6379")
 		os.Exit(1)
 	}
-	if kvStore.info.role == "slave" {
-
+	switch kvStore.info.role {
+	case "slave":
 		master, err := net.Dial("tcp", kvStore.info.masterIP+":"+kvStore.info.masterPort)
 		if err != nil {
 			panic(err)
@@ -610,6 +612,7 @@ func main() {
 		master.Write(toArray(buff))
 		master.Read(resp)
 		master.Write(toArray([]string{"PSYNC", "?", "-1"}))
+
 	}
 	connections := make(chan net.Conn)
 	go kvStore.handleConections(connections)
