@@ -142,7 +142,7 @@ type expiryEntry struct {
 }
 
 type RDB struct {
-	reader  bufio.Reader
+	reader  *bufio.Reader
 	version int
 	aux     map[string]string
 	dbs     []Database
@@ -154,7 +154,7 @@ func NewRDB(file string) (*RDB, error) {
 		return nil, err
 	}
 	return &RDB{
-		reader: *bufio.NewReader(fd),
+		reader: bufio.NewReader(fd),
 		aux:    make(map[string]string),
 	}, nil
 }
@@ -204,7 +204,7 @@ func (rdb *RDB) ParseString() (string, error) {
 		return "", nil
 	}
 	res := make([]byte, length)
-	_, err = io.ReadFull(&rdb.reader, res)
+	_, err = io.ReadFull(rdb.reader, res)
 	if err != nil {
 		return "", err
 	}
@@ -604,9 +604,12 @@ func main() {
 		}
 		fmt.Println(resp[:n])
 		buff = []string{"REPLCONF", "listening-port", port}
-		master.Write([]byte(toArray(buff)))
-		buff = []string{"REPLCONF", "capa", "psync2"}
-		master.Write([]byte(toArray(buff)))
+		master.Write(toArray(buff))
+		master.Read(resp)
+		buff = []string{"REPLCONF", "capa", "eof", "capa", "psync2"}
+		master.Write(toArray(buff))
+		master.Read(resp)
+		master.Write(toArray([]string{"PSYNC", "?", "-1"}))
 	}
 	connections := make(chan net.Conn)
 	go kvStore.handleConections(connections)
