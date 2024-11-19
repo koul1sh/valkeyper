@@ -134,7 +134,8 @@ func (kv *KVStore) handleConnection(conn net.Conn) {
 					panic(err)
 				}
 
-				conn.Write([]byte(fmt.Sprintf("$%d\r\n%q", len(rdbFile), rdbFile)))
+				res := append([]byte(fmt.Sprintf("$%d\r\n", len(rdbFile))), rdbFile...)
+				conn.Write(res)
 
 			}
 
