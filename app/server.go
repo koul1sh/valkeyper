@@ -14,9 +14,11 @@ import (
 )
 
 type Info struct {
-	role       string
-	masterIP   string
-	masterPort string
+	role             string
+	masterIP         string
+	masterPort       string
+	masterReplId     string
+	masterReplOffSet int
 }
 
 type KVStore struct {
@@ -115,12 +117,16 @@ func (kv *KVStore) handleConnection(conn net.Conn) {
 			case "INFO":
 				res := []string{
 					fmt.Sprintf("role:%s", kv.info.role),
-					"master_replid:8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb",
-					"master_repl_offset:0",
+					fmt.Sprintf("master_replid:%s", kv.info.masterReplId),
+					fmt.Sprintf("master_repl_offset:%d", kv.info.masterReplOffSet),
 				}
 				conn.Write([]byte(toBulkFromArr(res)))
 			case "REPLCONF":
 				conn.Write([]byte("+OK\r\n"))
+			case "PSYNC":
+				fmt.Println(kv.info.masterReplId)
+				fmt.Println(kv.info.masterReplOffSet)
+				conn.Write([]byte(fmt.Sprintf("+FULLRESYNC %s %d\r\n", kv.info.masterReplId, kv.info.masterReplOffSet)))
 			}
 
 		}
@@ -612,7 +618,9 @@ func main() {
 		master.Write(toArray(buff))
 		master.Read(resp)
 		master.Write(toArray([]string{"PSYNC", "?", "-1"}))
-
+	case "master":
+		kvStore.info.masterReplId = "8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb"
+		kvStore.info.masterReplOffSet = 0
 	}
 	connections := make(chan net.Conn)
 	go kvStore.handleConections(connections)
