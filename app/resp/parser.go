@@ -138,10 +138,11 @@ func (p *Parser) Parse() ([]string, error) {
 			return nil, err
 		}
 	case '$':
-		_, err := p.ParseBulkString()
+		buff, err := p.ParseBulkString()
 		if err != nil {
 			return nil, err
 		}
+		fmt.Println(string(buff))
 
 	}
 	return res, nil
