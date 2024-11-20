@@ -74,6 +74,7 @@ func (kv *KVStore) HandleConnection(conn net.Conn) {
 			}
 			panic("Error parsing : " + err.Error())
 		}
+		fmt.Println(buff)
 		if len(buff) > 0 {
 			switch buff[0] {
 			case "PING":
