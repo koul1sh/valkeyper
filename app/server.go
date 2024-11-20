@@ -49,6 +49,9 @@ func NewKVStore() *KVStore {
 }
 
 func (kv *KVStore) loadFromRDB(rdb *RDB) {
+	if len(rdb.dbs) < 1 {
+		return
+	}
 	kv.store = rdb.dbs[0].dbStore
 
 	for _, x := range rdb.dbs[0].expiryStore {
@@ -86,6 +89,7 @@ func (kv *KVStore) handleConnection(conn net.Conn) {
 
 				key := buff[1]
 				val := buff[2]
+				fmt.Println(kv.info.role, key, val)
 				ex := -1
 				if len(buff) > 4 {
 					ex, err = strconv.Atoi(buff[4])
@@ -94,7 +98,9 @@ func (kv *KVStore) handleConnection(conn net.Conn) {
 					}
 				}
 				kv.Set(key, val, ex)
+				// if conn.RemoteAddr().String() != kv.info.masterIP+":"+kv.info.masterPort {
 				conn.Write([]byte("+OK\r\n"))
+				// }
 				for _, slave := range kv.info.slaves {
 					slave.Write(toArray(buff))
 				}
@@ -149,6 +155,7 @@ func (kv *KVStore) handleConnection(conn net.Conn) {
 
 				res := append([]byte(fmt.Sprintf("$%d\r\n", len(rdbFile))), rdbFile...)
 				kv.info.slaves = append(kv.info.slaves, conn)
+				fmt.Println(res)
 				conn.Write(res)
 
 			}
@@ -188,6 +195,7 @@ func NewRDB(file string) (*RDB, error) {
 	return &RDB{
 		reader: bufio.NewReader(fd),
 		aux:    make(map[string]string),
+		dbs:    make([]Database, 0),
 	}, nil
 }
 func (rdb *RDB) ParseLength() (int, bool, error) {
@@ -438,7 +446,7 @@ func (kv *KVStore) handleConections(connections chan net.Conn) {
 }
 
 type Parser struct {
-	bufio.Reader
+	*bufio.Reader
 }
 
 type Config struct {
@@ -503,14 +511,16 @@ func (p *Parser) getLength() (int, error) {
 
 func NewParser(rdr io.Reader) *Parser {
 	return &Parser{
-		*bufio.NewReader(rdr),
+		bufio.NewReader(rdr),
 	}
 }
+
 func (p *Parser) ParseBulkString() ([]byte, error) {
 	length, err := p.getLength()
 	if err != nil {
 		return nil, err
 	}
+
 	crlf := make([]byte, 2)
 	_, err = io.ReadFull(p, crlf)
 	if err != nil {
@@ -524,7 +534,6 @@ func (p *Parser) ParseBulkString() ([]byte, error) {
 	}
 
 	return res, nil
-
 }
 
 func (p *Parser) ParseArray() ([]string, error) {
@@ -561,11 +570,19 @@ func (p *Parser) Parse() ([]string, error) {
 		return nil, err
 	}
 	res := []string{}
-	if iden == '*' {
+	switch iden {
+
+	case '*':
 		res, err = p.ParseArray()
 		if err != nil {
 			return nil, err
 		}
+	case '$':
+		_, err := p.ParseBulkString()
+		if err != nil {
+			return nil, err
+		}
+
 	}
 	return res, nil
 }
@@ -621,6 +638,19 @@ func main() {
 		fmt.Println("Failed to bind to port 6379")
 		os.Exit(1)
 	}
+
+	connections := make(chan net.Conn)
+	go kvStore.handleConections(connections)
+	go func() {
+
+		for {
+			conn, err := l.Accept()
+			if err != nil {
+				fmt.Println("Error accepting connection: ", err.Error())
+			}
+			connections <- conn
+		}
+	}()
 	switch kvStore.info.role {
 	case "slave":
 		master, err := net.Dial("tcp", kvStore.info.masterIP+":"+kvStore.info.masterPort)
@@ -629,62 +659,62 @@ func main() {
 		}
 		sendHandshake(master, port)
 
-		rdbfile, _ := os.Create("dump.rdb")
-		rdbContent := getRdbContent(bufio.NewReader(rdbfile))
-		if rdbContent != nil {
-
-			rdbfile.Write(rdbContent)
-			rdb, err := NewRDB("dump.rdb")
-			if err != nil {
-				panic(err)
-			}
-			kvStore.loadFromRDB(rdb)
-		}
+		kvStore.handleConnection(master)
 
 	case "master":
 		kvStore.info.masterReplId = "8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb"
 		kvStore.info.masterReplOffSet = 0
 	}
-	connections := make(chan net.Conn)
-	go kvStore.handleConections(connections)
-	for {
-		conn, err := l.Accept()
-		if err != nil {
-			fmt.Println("Error accepting connection: ", err.Error())
-		}
-		connections <- conn
-	}
+	blockCh := make(chan int)
+	<-blockCh
+
 }
 
 func sendHandshake(master net.Conn, port string) {
 
-	resp := make([]byte, 1024)
+	rdr := bufio.NewReader(master)
 	buff := []string{"PING"}
 	master.Write([]byte(toArray(buff)))
-	n, err := master.Read(resp)
-	if err != nil {
-		panic(err)
-	}
-	fmt.Println(resp[:n])
+	rdr.ReadBytes('\n')
+
 	buff = []string{"REPLCONF", "listening-port", port}
 	master.Write(toArray(buff))
-	master.Read(resp)
+	rdr.ReadBytes('\n')
+
 	buff = []string{"REPLCONF", "capa", "eof", "capa", "psync2"}
 	master.Write(toArray(buff))
-	master.Read(resp)
+	rdr.ReadBytes('\n')
+
 	master.Write(toArray([]string{"PSYNC", "?", "-1"}))
+	tmp, _ := rdr.ReadBytes('\n')
+	fmt.Println("end part", string(tmp))
+
 }
 
 func getRdbContent(rdr *bufio.Reader) []byte {
-	rdr.ReadByte()
-	lenBytes, _ := rdr.ReadBytes('\r')
-	byt, _ := rdr.ReadByte()
+	byt, err := rdr.ReadByte()
+	if err != nil {
+		panic(err)
+	}
+	if byt != '$' {
+		fmt.Printf("expected $ got %q\n", byt)
+		panic("")
+
+	}
+	lenBytes, err := rdr.ReadBytes('\r')
+	if err != nil {
+		panic(err)
+	}
+	byt, _ = rdr.ReadByte()
 	if byt != '\n' {
 		fmt.Println("something wrong with rdb file recived from master")
 		return nil
 	}
-	length := binary.BigEndian.Uint64(lenBytes)
-	content := make([]byte, length)
+	length, _ := binary.Varint(lenBytes[:len(lenBytes)-1])
+
+	fmt.Println("length", length)
+	content := make([]byte, int(length))
 	io.ReadFull(rdr, content)
+	fmt.Println(string(content))
 	return content
 }
