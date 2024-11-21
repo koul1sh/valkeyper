@@ -52,7 +52,7 @@ func main() {
 		kvStore.Info.MasterConn = master
 
 		// kvStore.LoadRDB(master)
-		time.Sleep(time.Millisecond * 200)
+		time.Sleep(time.Millisecond * 100)
 		kvStore.HandleConnection(master)
 
 	case "master":
