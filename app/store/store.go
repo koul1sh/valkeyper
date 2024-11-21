@@ -100,6 +100,7 @@ func (kv *KVStore) HandleConnection(conn net.Conn) {
 	if conn == kv.Info.MasterConn {
 		fmt.Println("reading from master")
 	}
+	time.Sleep(time.Millisecond * 100)
 	parser := resp.NewParser(conn)
 	for {
 		buff, err := parser.Parse()
