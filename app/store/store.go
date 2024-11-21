@@ -18,6 +18,7 @@ type Info struct {
 	MasterPort       string
 	MasterReplId     string
 	MasterReplOffSet int
+	MasterConn       net.Conn
 	slaves           []net.Conn
 }
 
@@ -64,26 +65,65 @@ func (kv *KVStore) handleExpiry(timeout <-chan time.Time, key string) {
 	delete(kv.store, key)
 }
 
+func (kv *KVStore) LoadRDB(master net.Conn) {
+
+	fmt.Println("started loading rdb from master...")
+	parser := resp.NewParser(master)
+	// for {
+
+	byt, err := parser.ReadByte()
+	if err != nil {
+		fmt.Println("no byte to read", err)
+		return
+
+	}
+	fmt.Println("first", byt)
+	if string(byt) == "$" {
+		fmt.Println("not possible")
+		rdbContent, _ := parser.ParseBulkString()
+		rdb, err := rdb.NewFromBytes(rdbContent)
+		if err != nil {
+			panic(err)
+		}
+		kv.LoadFromRDB(rdb)
+		// break
+	} else {
+		fmt.Printf("expected $, got %s\n", string(byt))
+		parser.UnreadByte()
+	}
+	// }
+	fmt.Println("finished loading rdb from master...")
+
+}
+
 func (kv *KVStore) HandleConnection(conn net.Conn) {
+	if conn == kv.Info.MasterConn {
+		fmt.Println("reading from master")
+	}
 	parser := resp.NewParser(conn)
 	for {
 		buff, err := parser.Parse()
 		if err != nil {
 			if err == io.EOF {
+				if conn == kv.Info.MasterConn {
+					fmt.Println("nothing to read from master")
+				}
 				break
 			}
 			panic("Error parsing : " + err.Error())
 		}
 		fmt.Println(buff)
+		var res []byte = []byte{}
 		if len(buff) > 0 {
 			switch buff[0] {
 			case "PING":
-				conn.Write([]byte("+PONG\r\n"))
+				if conn != kv.Info.MasterConn {
+					res = []byte("+PONG\r\n")
+				}
 			case "ECHO":
 				msg := buff[1]
-				res := fmt.Sprintf("$%d\r\n%s\r\n", len(msg), msg)
+				res = []byte(fmt.Sprintf("$%d\r\n%s\r\n", len(msg), msg))
 
-				conn.Write([]byte(res))
 			case "SET":
 
 				key := buff[1]
@@ -97,22 +137,20 @@ func (kv *KVStore) HandleConnection(conn net.Conn) {
 					}
 				}
 				kv.Set(key, val, ex)
-				// if conn.RemoteAddr().String() != kv.Info.masterIP+":"+kv.Info.masterPort {
-				conn.Write([]byte("+OK\r\n"))
-				// }
+				if kv.Info.MasterConn != conn {
+					res = []byte("+OK\r\n")
+				}
 				for _, slave := range kv.Info.slaves {
 					slave.Write(resp.ToArray(buff))
 				}
 			case "GET":
 				key := buff[1]
 				val, ok := kv.store[key]
-				var res string
 				if !ok {
-					res = "$-1\r\n"
+					res = []byte("$-1\r\n")
 				} else {
-					res = fmt.Sprintf("$%d\r\n%s\r\n", len(val), val)
+					res = []byte(fmt.Sprintf("$%d\r\n%s\r\n", len(val), val))
 				}
-				conn.Write([]byte(res))
 			case "CONFIG":
 				config := resp.NewConfig("redis.conf")
 				config.Marshal()
@@ -120,7 +158,7 @@ func (kv *KVStore) HandleConnection(conn net.Conn) {
 					key := buff[2]
 					val, ok := config.Pair[key]
 					if ok {
-						conn.Write(resp.ToArray([]string{key, val}))
+						res = resp.ToArray([]string{key, val})
 					}
 				} else {
 					fmt.Println("key not found in config")
@@ -132,36 +170,49 @@ func (kv *KVStore) HandleConnection(conn net.Conn) {
 				for k := range kv.store {
 					keys = append(keys, k)
 				}
-				conn.Write(resp.ToArray(keys))
+				res = resp.ToArray(keys)
 			case "INFO":
-				res := []string{
+				info := []string{
 					fmt.Sprintf("role:%s", kv.Info.Role),
 					fmt.Sprintf("master_replid:%s", kv.Info.MasterReplId),
 					fmt.Sprintf("master_repl_offset:%d", kv.Info.MasterReplOffSet),
 				}
-				conn.Write([]byte(toBulkFromArr(res)))
+				res = []byte(toBulkFromArr(info))
 			case "REPLCONF":
 				switch buff[1] {
 				case "GETACK":
-					conn.Write(resp.ToArray([]string{"REPLCONF", "ACK", "0"}))
+					res = resp.ToArray([]string{"REPLCONF", "ACK", fmt.Sprintf("%d", kv.Info.MasterReplOffSet)})
 				default:
-					conn.Write([]byte("+OK\r\n"))
+					res = []byte("+OK\r\n")
 				}
 			case "PSYNC":
 				fmt.Println(kv.Info.MasterReplId)
 				fmt.Println(kv.Info.MasterReplOffSet)
-				conn.Write([]byte(fmt.Sprintf("+FULLRESYNC %s %d\r\n", kv.Info.MasterReplId, kv.Info.MasterReplOffSet)))
+				res = []byte(fmt.Sprintf("+FULLRESYNC %s %d\r\n", kv.Info.MasterReplId, kv.Info.MasterReplOffSet))
 
 				rdbFile, err := hex.DecodeString("524544495330303131fa0972656469732d76657205372e322e30fa0a72656469732d62697473c040fa056374696d65c26d08bc65fa08757365642d6d656dc2b0c41000fa08616f662d62617365c000fff06e3bfec0ff5aa2")
 				if err != nil {
 					panic(err)
 				}
 
-				res := append([]byte(fmt.Sprintf("$%d\r\n", len(rdbFile))), rdbFile...)
+				tmp := append([]byte(fmt.Sprintf("$%d\r\n", len(rdbFile))), rdbFile...)
+				res = append(res, tmp...)
 				kv.Info.slaves = append(kv.Info.slaves, conn)
-				fmt.Println(res)
-				conn.Write(res)
+			}
 
+			if kv.Info.Role == "slave" {
+
+				if conn == kv.Info.MasterConn {
+					if buff[0] == "REPLCONF" && buff[1] == "GETACK" {
+						conn.Write(res)
+					}
+				} else {
+					conn.Write(res)
+				}
+
+				kv.Info.MasterReplOffSet += len(resp.ToArray(buff))
+			} else {
+				conn.Write(res)
 			}
 
 		}

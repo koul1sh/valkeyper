@@ -9,6 +9,7 @@ import (
 	"path"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/codecrafters-io/redis-starter-go/app/rdb"
 	"github.com/codecrafters-io/redis-starter-go/app/resp"
@@ -48,8 +49,11 @@ func main() {
 			panic(err)
 		}
 		sendHandshake(master, port)
+		kvStore.Info.MasterConn = master
 
-		go kvStore.HandleConnection(master)
+		// kvStore.LoadRDB(master)
+		time.Sleep(time.Millisecond * 200)
+		kvStore.HandleConnection(master)
 
 	case "master":
 		kvStore.Info.MasterReplId = "8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb"

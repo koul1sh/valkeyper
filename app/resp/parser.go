@@ -127,17 +127,19 @@ func (p *Parser) ParseArray() ([]string, error) {
 func (p *Parser) Parse() ([]string, error) {
 	iden, err := p.ReadByte()
 	if err != nil {
+		fmt.Println("no first byte")
 		return nil, err
 	}
+	fmt.Println(string(iden))
 	res := []string{}
-	switch iden {
+	switch string(iden) {
 
-	case '*':
+	case "*":
 		res, err = p.ParseArray()
 		if err != nil {
 			return nil, err
 		}
-	case '$':
+	case "$":
 		buff, err := p.ParseBulkString()
 		if err != nil {
 			return nil, err

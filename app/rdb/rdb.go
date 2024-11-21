@@ -30,6 +30,17 @@ type RDB struct {
 	Dbs     []Database
 }
 
+func NewFromBytes(content []byte) (*RDB, error) {
+	fmt.Println(string(content))
+	file, _ := os.Create("dump.rdb")
+	file.Write(content)
+	rdb, err := NewRDB("dump.rdb")
+	if err != nil {
+		return nil, err
+	}
+	return rdb, nil
+}
+
 func NewRDB(file string) (*RDB, error) {
 	fd, err := os.Open(file)
 	if err != nil {
