@@ -1,11 +1,15 @@
 package store
 
 import (
+	"bufio"
 	"encoding/hex"
 	"fmt"
 	"io"
 	"net"
+	"os"
+	"path"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/codecrafters-io/redis-starter-go/app/rdb"
@@ -20,6 +24,7 @@ type Info struct {
 	MasterReplOffSet int
 	MasterConn       net.Conn
 	slaves           []net.Conn
+	port             string
 }
 
 type KVStore struct {
@@ -41,7 +46,9 @@ func (kv *KVStore) Set(key, value string, expiry int) {
 func New() *KVStore {
 	return &KVStore{
 		Info: Info{
-			Role: "master",
+			Role:             "master",
+			MasterReplId:     "8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb",
+			MasterReplOffSet: 0,
 		},
 		store: make(map[string]string),
 	}
@@ -238,5 +245,74 @@ func (kv *KVStore) HandleConections(connections chan net.Conn) {
 	for {
 		conn := <-connections
 		go kv.HandleConnection(conn)
+	}
+}
+
+func (kv *KVStore) SendHandshake(master net.Conn) {
+
+	rdr := bufio.NewReader(master)
+	buff := []string{"PING"}
+	master.Write([]byte(resp.ToArray(buff)))
+	rdr.ReadBytes('\n')
+
+	buff = []string{"REPLCONF", "listening-port", kv.Info.port}
+	master.Write(resp.ToArray(buff))
+	rdr.ReadBytes('\n')
+
+	buff = []string{"REPLCONF", "capa", "eof", "capa", "psync2"}
+	master.Write(resp.ToArray(buff))
+	rdr.ReadBytes('\n')
+
+	master.Write(resp.ToArray([]string{"PSYNC", "?", "-1"}))
+	tmp, _ := rdr.ReadBytes('\n')
+	fmt.Println("end part", string(tmp))
+
+}
+func (kv *KVStore) HandleReplication() {
+	master, err := net.Dial("tcp", kv.Info.MasterIP+":"+kv.Info.MasterPort)
+	if err != nil {
+		panic(err)
+	}
+	kv.SendHandshake(master)
+	kv.Info.MasterConn = master
+
+	// kvStore.LoadRDB(master)
+	time.Sleep(time.Millisecond * 100)
+	kv.HandleConnection(master)
+
+}
+func (kv *KVStore) ParseCommandLine() {
+
+	flags := make(map[string]string)
+	kv.Info.port = flags["port"]
+
+	for i := 1; i < len(os.Args); i++ {
+		if os.Args[i][:2] == "--" {
+			flags[os.Args[i][2:]] = os.Args[i+1]
+			i++
+		}
+	}
+	replicaof, ok := flags["replicaof"]
+	if ok {
+		kv.Info.Role = "slave"
+		kv.Info.MasterIP = strings.Split(replicaof, " ")[0]
+		kv.Info.MasterPort = strings.Split(replicaof, " ")[1]
+	}
+
+	dir, ok1 := flags["dir"]
+	dbfile, ok2 := flags["dbfilename"]
+
+	if ok1 && ok2 {
+
+		rdb, err := rdb.NewRDB(path.Join(dir, dbfile))
+		if err == nil {
+			err = rdb.Parse()
+			if err != nil {
+				panic(err)
+			}
+			kv.LoadFromRDB(rdb)
+		} else {
+			panic(err)
+		}
 	}
 }
