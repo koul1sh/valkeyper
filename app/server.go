@@ -12,32 +12,30 @@ func main() {
 	fmt.Println("Logs from your program will appear here!")
 
 	kvStore := store.New()
-	var port string = "6379"
 	kvStore.ParseCommandLine()
 
+	go kvStore.HandleConections()
+	fmt.Println(kvStore)
 	if kvStore.Info.Role == "slave" {
 		fmt.Println("connecting to master by slave node")
-		go kvStore.HandleReplication()
+		kvStore.HandleReplication()
 	}
 
-	addr := fmt.Sprintf("0.0.0.0:%s", port)
+	addr := fmt.Sprintf("0.0.0.0:%s", kvStore.Info.Port)
 	l, err := net.Listen("tcp", addr)
 	if err != nil {
-		fmt.Println("Failed to bind to port 6379")
+		fmt.Printf("Failed to bind to port %s\n", kvStore.Info.Port)
 		os.Exit(1)
 	}
+	defer l.Close()
+	fmt.Printf("Listening on port %s\n", kvStore.Info.Port)
 
-	connections := make(chan net.Conn)
-	go kvStore.HandleConections(connections)
-	go func() {
-
-		for {
-			conn, err := l.Accept()
-			if err != nil {
-				fmt.Println("Error accepting connection: ", err.Error())
-			}
-			connections <- conn
+	for {
+		conn, err := l.Accept()
+		if err != nil {
+			fmt.Println("Error accepting connection: ", err.Error())
 		}
-	}()
+		kvStore.Connections <- conn
+	}
 
 }

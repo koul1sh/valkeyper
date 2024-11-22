@@ -46,7 +46,7 @@ func (c *Config) Marshal() {
 	}
 }
 
-func (p *Parser) getLength() (int, error) {
+func (p *Parser) GetLength() (int, error) {
 	buff := strings.Builder{}
 	for {
 		chr, err := p.ReadByte()
@@ -76,7 +76,7 @@ func NewParser(rdr io.Reader) *Parser {
 }
 
 func (p *Parser) ParseBulkString() ([]byte, error) {
-	length, err := p.getLength()
+	length, err := p.GetLength()
 	if err != nil {
 		return nil, err
 	}
@@ -97,7 +97,7 @@ func (p *Parser) ParseBulkString() ([]byte, error) {
 }
 
 func (p *Parser) ParseArray() ([]string, error) {
-	length, err := p.getLength()
+	length, err := p.GetLength()
 	if err != nil {
 		return nil, err
 	}
@@ -145,7 +145,8 @@ func (p *Parser) Parse() ([]string, error) {
 			return nil, err
 		}
 		fmt.Println(string(buff))
-
+	default:
+		fmt.Printf("got %s\n", string(iden))
 	}
 	return res, nil
 }

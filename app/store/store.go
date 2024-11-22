@@ -24,12 +24,14 @@ type Info struct {
 	MasterReplOffSet int
 	MasterConn       net.Conn
 	slaves           []net.Conn
-	port             string
+	Port             string
+	flags            map[string]string
 }
 
 type KVStore struct {
-	Info  Info
-	store map[string]string
+	Info        Info
+	store       map[string]string
+	Connections chan net.Conn
 }
 
 func (kv *KVStore) Set(key, value string, expiry int) {
@@ -49,8 +51,10 @@ func New() *KVStore {
 			Role:             "master",
 			MasterReplId:     "8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb",
 			MasterReplOffSet: 0,
+			Port:             "6379",
 		},
-		store: make(map[string]string),
+		store:       make(map[string]string),
+		Connections: make(chan net.Conn),
 	}
 }
 
@@ -104,30 +108,25 @@ func (kv *KVStore) LoadRDB(master net.Conn) {
 }
 
 func (kv *KVStore) HandleConnection(conn net.Conn) {
-	if conn == kv.Info.MasterConn {
-		fmt.Println("reading from master")
-	}
-	time.Sleep(time.Millisecond * 100)
+	defer conn.Close()
 	parser := resp.NewParser(conn)
 	for {
 		buff, err := parser.Parse()
 		if err != nil {
 			if err == io.EOF {
-				if conn == kv.Info.MasterConn {
-					fmt.Println("nothing to read from master")
-				}
 				break
 			}
 			panic("Error parsing : " + err.Error())
 		}
 		fmt.Println(buff)
+		if len(buff) == 0 {
+			continue
+		}
 		var res []byte = []byte{}
 		if len(buff) > 0 {
 			switch buff[0] {
 			case "PING":
-				if conn != kv.Info.MasterConn {
-					res = []byte("+PONG\r\n")
-				}
+				res = []byte("+PONG\r\n")
 			case "ECHO":
 				msg := buff[1]
 				res = []byte(fmt.Sprintf("$%d\r\n%s\r\n", len(msg), msg))
@@ -160,11 +159,9 @@ func (kv *KVStore) HandleConnection(conn net.Conn) {
 					res = []byte(fmt.Sprintf("$%d\r\n%s\r\n", len(val), val))
 				}
 			case "CONFIG":
-				config := resp.NewConfig("redis.conf")
-				config.Marshal()
 				if len(buff) > 2 && buff[1] == "GET" {
 					key := buff[2]
-					val, ok := config.Pair[key]
+					val, ok := kv.Info.flags[key]
 					if ok {
 						res = resp.ToArray([]string{key, val})
 					}
@@ -241,56 +238,92 @@ func toBulkFromArr(arr []string) string {
 
 }
 
-func (kv *KVStore) HandleConections(connections chan net.Conn) {
+func (kv *KVStore) HandleConections() {
 	for {
-		conn := <-connections
+		conn := <-kv.Connections
 		go kv.HandleConnection(conn)
 	}
 }
 
-func (kv *KVStore) SendHandshake(master net.Conn) {
+func (kv *KVStore) SendHandshake(master *net.Conn) {
 
-	rdr := bufio.NewReader(master)
+	rdr := bufio.NewReader(*master)
 	buff := []string{"PING"}
-	master.Write([]byte(resp.ToArray(buff)))
-	rdr.ReadBytes('\n')
+	res := []byte{}
+	fmt.Println("sent ping")
+	(*master).Write([]byte(resp.ToArray(buff)))
+	res, _ = rdr.ReadBytes('\n')
+	fmt.Println(string(res))
 
-	buff = []string{"REPLCONF", "listening-port", kv.Info.port}
-	master.Write(resp.ToArray(buff))
-	rdr.ReadBytes('\n')
+	fmt.Println("sent replconf1")
+	buff = []string{"REPLCONF", "listening-port", kv.Info.Port}
+	(*master).Write(resp.ToArray(buff))
+	res, _ = rdr.ReadBytes('\n')
+	fmt.Println(string(res))
 
-	buff = []string{"REPLCONF", "capa", "eof", "capa", "psync2"}
-	master.Write(resp.ToArray(buff))
-	rdr.ReadBytes('\n')
+	fmt.Println("sent replconf2")
+	buff = []string{"REPLCONF", "capa", "psync2"}
+	(*master).Write(resp.ToArray(buff))
+	res, _ = rdr.ReadBytes('\n')
+	fmt.Println(string(res))
 
-	master.Write(resp.ToArray([]string{"PSYNC", "?", "-1"}))
-	tmp, _ := rdr.ReadBytes('\n')
-	fmt.Println("end part", string(tmp))
+	fmt.Println("sent psync")
+	(*master).Write(resp.ToArray([]string{"PSYNC", "?", "-1"}))
+	res, _ = rdr.ReadBytes('\n')
+	fmt.Println(string(res))
+	expectRDBFile(master)
 
 }
+
+func expectRDBFile(conn *net.Conn) {
+	p := resp.NewParser(*conn)
+	byt, err := p.ReadByte()
+	if err != nil {
+		fmt.Println("nothing to read")
+		return
+	}
+	if string(byt) != "$" {
+		fmt.Printf("expected rdb to start with $, got %s\n", string(byt))
+		p.UnreadByte()
+	} else {
+		n, err := p.GetLength()
+		if err != nil {
+			panic(err)
+		}
+		p.ReadBytes('\n')
+		buff := make([]byte, n)
+		_, err = io.ReadFull(p, buff)
+		if err != nil {
+			panic(err)
+		}
+		fmt.Println(string(buff))
+	}
+}
+
 func (kv *KVStore) HandleReplication() {
 	master, err := net.Dial("tcp", kv.Info.MasterIP+":"+kv.Info.MasterPort)
 	if err != nil {
 		panic(err)
 	}
-	kv.SendHandshake(master)
+	kv.SendHandshake(&master)
 	kv.Info.MasterConn = master
 
-	// kvStore.LoadRDB(master)
-	time.Sleep(time.Millisecond * 100)
-	kv.HandleConnection(master)
+	kv.Connections <- master
 
 }
 func (kv *KVStore) ParseCommandLine() {
 
 	flags := make(map[string]string)
-	kv.Info.port = flags["port"]
 
 	for i := 1; i < len(os.Args); i++ {
 		if os.Args[i][:2] == "--" {
 			flags[os.Args[i][2:]] = os.Args[i+1]
 			i++
 		}
+	}
+	port, ok := flags["port"]
+	if ok {
+		kv.Info.Port = port
 	}
 	replicaof, ok := flags["replicaof"]
 	if ok {
@@ -312,7 +345,9 @@ func (kv *KVStore) ParseCommandLine() {
 			}
 			kv.LoadFromRDB(rdb)
 		} else {
-			panic(err)
+			fmt.Println(err)
 		}
 	}
+	kv.Info.flags = flags
+	fmt.Println(flags)
 }
