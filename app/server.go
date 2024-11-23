@@ -22,6 +22,7 @@ func main() {
 	}
 
 	addr := fmt.Sprintf("0.0.0.0:%s", kvStore.Info.Port)
+
 	l, err := net.Listen("tcp", addr)
 	if err != nil {
 		fmt.Printf("Failed to bind to port %s\n", kvStore.Info.Port)

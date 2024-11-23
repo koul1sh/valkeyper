@@ -271,7 +271,6 @@ func (kv *KVStore) SendHandshake(master *net.Conn) {
 	(*master).Write(resp.ToArray([]string{"PSYNC", "?", "-1"}))
 	res, _ = rdr.ReadBytes('\n')
 	fmt.Println(string(res))
-	expectRDBFile(master)
 
 }
 
@@ -309,6 +308,7 @@ func (kv *KVStore) HandleReplication() {
 	kv.Info.MasterConn = master
 
 	kv.Connections <- master
+	// expectRDBFile(&master)
 
 }
 func (kv *KVStore) ParseCommandLine() {

@@ -81,8 +81,7 @@ func (p *Parser) ParseBulkString() ([]byte, error) {
 		return nil, err
 	}
 
-	crlf := make([]byte, 2)
-	_, err = io.ReadFull(p, crlf)
+	_, err = p.ReadBytes('\n')
 	if err != nil {
 		return nil, err
 	}
@@ -140,6 +139,7 @@ func (p *Parser) Parse() ([]string, error) {
 			return nil, err
 		}
 	case "$":
+		// read rdb file
 		buff, err := p.ParseBulkString()
 		if err != nil {
 			return nil, err
