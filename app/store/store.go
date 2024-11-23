@@ -245,30 +245,30 @@ func (kv *KVStore) HandleConections() {
 	}
 }
 
-func (kv *KVStore) SendHandshake(master *net.Conn) {
+func (kv *KVStore) SendHandshake(master net.Conn) {
 
-	rdr := bufio.NewReader(*master)
+	rdr := bufio.NewReader(master)
 	buff := []string{"PING"}
 	res := []byte{}
 	fmt.Println("sent ping")
-	(*master).Write([]byte(resp.ToArray(buff)))
+	master.Write([]byte(resp.ToArray(buff)))
 	res, _ = rdr.ReadBytes('\n')
 	fmt.Println(string(res))
 
 	fmt.Println("sent replconf1")
 	buff = []string{"REPLCONF", "listening-port", kv.Info.Port}
-	(*master).Write(resp.ToArray(buff))
+	master.Write(resp.ToArray(buff))
 	res, _ = rdr.ReadBytes('\n')
 	fmt.Println(string(res))
 
 	fmt.Println("sent replconf2")
 	buff = []string{"REPLCONF", "capa", "psync2"}
-	(*master).Write(resp.ToArray(buff))
+	master.Write(resp.ToArray(buff))
 	res, _ = rdr.ReadBytes('\n')
 	fmt.Println(string(res))
 
 	fmt.Println("sent psync")
-	(*master).Write(resp.ToArray([]string{"PSYNC", "?", "-1"}))
+	master.Write(resp.ToArray([]string{"PSYNC", "?", "-1"}))
 	res, _ = rdr.ReadBytes('\n')
 	fmt.Println(string(res))
 
@@ -304,7 +304,7 @@ func (kv *KVStore) HandleReplication() {
 	if err != nil {
 		panic(err)
 	}
-	kv.SendHandshake(&master)
+	kv.SendHandshake(master)
 	kv.Info.MasterConn = master
 	kv.Connections <- master
 
