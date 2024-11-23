@@ -204,7 +204,7 @@ func (kv *KVStore) HandleConnection(conn net.Conn) {
 				res = append(res, tmp...)
 				kv.Info.slaves = append(kv.Info.slaves, conn)
 			case "WAIT":
-				conn.Write([]byte(":0\r\n"))
+				conn.Write([]byte(fmt.Sprintf(":%d\r\n", len(kv.Info.slaves))))
 			}
 
 			if kv.Info.Role == "slave" {
