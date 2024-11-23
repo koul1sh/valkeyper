@@ -138,8 +138,8 @@ func (p *Parser) Parse() ([]string, error) {
 		if err != nil {
 			return nil, err
 		}
-	case "$":
-		// read rdb file
+	case "$": // This case reads rdb
+
 		buff, err := p.ParseBulkString()
 		if err != nil {
 			return nil, err

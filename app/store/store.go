@@ -274,30 +274,30 @@ func (kv *KVStore) SendHandshake(master *net.Conn) {
 
 }
 
-func expectRDBFile(conn *net.Conn) {
-	p := resp.NewParser(*conn)
-	byt, err := p.ReadByte()
-	if err != nil {
-		fmt.Println("nothing to read")
-		return
-	}
-	if string(byt) != "$" {
-		fmt.Printf("expected rdb to start with $, got %s\n", string(byt))
-		p.UnreadByte()
-	} else {
-		n, err := p.GetLength()
-		if err != nil {
-			panic(err)
-		}
-		p.ReadBytes('\n')
-		buff := make([]byte, n)
-		_, err = io.ReadFull(p, buff)
-		if err != nil {
-			panic(err)
-		}
-		fmt.Println(string(buff))
-	}
-}
+// func expectRDBFile(conn *net.Conn) {
+// 	p := resp.NewParser(*conn)
+// 	byt, err := p.ReadByte()
+// 	if err != nil {
+// 		fmt.Println("nothing to read")
+// 		return
+// 	}
+// 	if string(byt) != "$" {
+// 		fmt.Printf("expected rdb to start with $, got %s\n", string(byt))
+// 		p.UnreadByte()
+// 	} else {
+// 		n, err := p.GetLength()
+// 		if err != nil {
+// 			panic(err)
+// 		}
+// 		p.ReadBytes('\n')
+// 		buff := make([]byte, n)
+// 		_, err = io.ReadFull(p, buff)
+// 		if err != nil {
+// 			panic(err)
+// 		}
+// 		fmt.Println(string(buff))
+// 	}
+// }
 
 func (kv *KVStore) HandleReplication() {
 	master, err := net.Dial("tcp", kv.Info.MasterIP+":"+kv.Info.MasterPort)
