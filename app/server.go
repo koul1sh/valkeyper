@@ -15,7 +15,9 @@ func main() {
 	kvStore.ParseCommandLine()
 
 	go kvStore.HandleConections()
+
 	fmt.Println(kvStore)
+
 	if kvStore.Info.Role == "slave" {
 		fmt.Println("connecting to master by slave node")
 		kvStore.HandleReplication()

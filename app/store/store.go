@@ -306,9 +306,7 @@ func (kv *KVStore) HandleReplication() {
 	}
 	kv.SendHandshake(&master)
 	kv.Info.MasterConn = master
-
 	kv.Connections <- master
-	// expectRDBFile(&master)
 
 }
 func (kv *KVStore) ParseCommandLine() {

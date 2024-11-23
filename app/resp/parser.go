@@ -102,8 +102,7 @@ func (p *Parser) ParseArray() ([]string, error) {
 	}
 	res := make([]string, length)
 	for i := 0; i < length; i++ {
-		crlf := make([]byte, 2)
-		_, err = io.ReadFull(p, crlf)
+		_, err = p.ReadBytes('\n')
 		if err != nil {
 			return nil, err
 		}
@@ -119,6 +118,10 @@ func (p *Parser) ParseArray() ([]string, error) {
 			}
 			res[i] = string(str)
 		}
+	}
+	_, err = p.ReadBytes('\n')
+	if err != nil {
+		return nil, err
 	}
 	return res, nil
 }
@@ -138,7 +141,7 @@ func (p *Parser) Parse() ([]string, error) {
 		if err != nil {
 			return nil, err
 		}
-	case "$": // This case reads rdb
+	case "$": // This case reads rdb after handshake
 
 		buff, err := p.ParseBulkString()
 		if err != nil {
