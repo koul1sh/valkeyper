@@ -5,6 +5,7 @@ import (
 	"net"
 	"os"
 
+	"github.com/codecrafters-io/redis-starter-go/app/resp"
 	"github.com/codecrafters-io/redis-starter-go/app/store"
 )
 
@@ -14,7 +15,7 @@ func main() {
 	kvStore := store.New()
 	kvStore.ParseCommandLine()
 
-	go kvStore.HandleConections()
+	// go kvStore.HandleConections()
 
 	fmt.Println(kvStore)
 
@@ -38,7 +39,9 @@ func main() {
 		if err != nil {
 			fmt.Println("Error accepting connection: ", err.Error())
 		}
-		kvStore.Connections <- conn
+		// kvStore.Connections <- conn
+		rdr := resp.NewParser(conn)
+		go kvStore.HandleConnection(conn, rdr)
 	}
 
 }

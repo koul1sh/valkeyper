@@ -1,7 +1,6 @@
 package store
 
 import (
-	"bufio"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -29,9 +28,9 @@ type Info struct {
 }
 
 type KVStore struct {
-	Info        Info
-	store       map[string]string
-	Connections chan net.Conn
+	Info  Info
+	store map[string]string
+	// Connections chan net.Conn
 }
 
 func (kv *KVStore) Set(key, value string, expiry int) {
@@ -53,8 +52,8 @@ func New() *KVStore {
 			MasterReplOffSet: 0,
 			Port:             "6379",
 		},
-		store:       make(map[string]string),
-		Connections: make(chan net.Conn),
+		store: make(map[string]string),
+		// Connections: make(chan net.Conn),
 	}
 }
 
@@ -107,9 +106,8 @@ func (kv *KVStore) LoadRDB(master net.Conn) {
 
 }
 
-func (kv *KVStore) HandleConnection(conn net.Conn) {
+func (kv *KVStore) HandleConnection(conn net.Conn, parser *resp.Parser) {
 	defer conn.Close()
-	parser := resp.NewParser(conn)
 	for {
 		buff, err := parser.Parse()
 		if err != nil {
@@ -240,16 +238,15 @@ func toBulkFromArr(arr []string) string {
 
 }
 
-func (kv *KVStore) HandleConections() {
-	for {
-		conn := <-kv.Connections
-		go kv.HandleConnection(conn)
-	}
-}
+// func (kv *KVStore) HandleConections() {
+// 	for {
+// 		conn := <-kv.Connections
+// 		go kv.HandleConnection(conn)
+// 	}
+// }
 
-func (kv *KVStore) SendHandshake(master net.Conn) {
+func (kv *KVStore) SendHandshake(master net.Conn, rdr *resp.Parser) {
 
-	rdr := bufio.NewReader(master)
 	buff := []string{"PING"}
 	res := []byte{}
 	fmt.Println("sent ping")
@@ -273,43 +270,50 @@ func (kv *KVStore) SendHandshake(master net.Conn) {
 	master.Write(resp.ToArray([]string{"PSYNC", "?", "-1"}))
 	res, _ = rdr.ReadBytes('\n')
 	fmt.Println(string(res))
-
+	// tmp := make([]byte, 93)
+	// m, err := rdr.Read(tmp)
+	// if err != nil {
+	// 	panic(err)
+	// }
+	// fmt.Println("read bytes", m)
+	// fmt.Println(string(tmp))
+	expectRDBFile(rdr)
 }
 
-// func expectRDBFile(conn *net.Conn) {
-// 	p := resp.NewParser(*conn)
-// 	byt, err := p.ReadByte()
-// 	if err != nil {
-// 		fmt.Println("nothing to read")
-// 		return
-// 	}
-// 	if string(byt) != "$" {
-// 		fmt.Printf("expected rdb to start with $, got %s\n", string(byt))
-// 		p.UnreadByte()
-// 	} else {
-// 		n, err := p.GetLength()
-// 		if err != nil {
-// 			panic(err)
-// 		}
-// 		p.ReadBytes('\n')
-// 		buff := make([]byte, n)
-// 		_, err = io.ReadFull(p, buff)
-// 		if err != nil {
-// 			panic(err)
-// 		}
-// 		fmt.Println(string(buff))
-// 	}
-// }
+func expectRDBFile(p *resp.Parser) {
+	byt, err := p.ReadByte()
+	if err != nil {
+		fmt.Println("nothing to read")
+		return
+	}
+	if string(byt) != "$" {
+		fmt.Printf("expected rdb to start with $, got %s\n", string(byt))
+		p.UnreadByte()
+	} else {
+		n, err := p.GetLength()
+		if err != nil {
+			panic(err)
+		}
+		p.ReadBytes('\n')
+		buff := make([]byte, n)
+		_, err = io.ReadFull(p, buff)
+		if err != nil {
+			panic(err)
+		}
+		fmt.Println(string(buff))
+	}
+}
 
 func (kv *KVStore) HandleReplication() {
 	master, err := net.Dial("tcp", kv.Info.MasterIP+":"+kv.Info.MasterPort)
 	if err != nil {
 		panic(err)
 	}
-	kv.SendHandshake(master)
+	rdr := resp.NewParser(master)
+	kv.SendHandshake(master, rdr)
 	kv.Info.MasterConn = master
-	kv.Connections <- master
-
+	// kv.Connections <- master
+	go kv.HandleConnection(master, rdr)
 }
 func (kv *KVStore) ParseCommandLine() {
 
