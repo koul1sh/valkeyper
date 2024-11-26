@@ -265,11 +265,28 @@ func (kv *KVStore) HandleConnection(conn net.Conn, parser *resp.Parser) {
 				fmt.Println("yes", buff[3])
 				lastEntry := strings.Split(kv.Stream[buff[1]][len(kv.Stream[buff[1]])-1].Id, "-")
 				currEntry := strings.Split(buff[2], "-")
+
 				lastEntryTime, _ := strconv.Atoi(lastEntry[0])
 				currEntryTime, _ := strconv.Atoi(currEntry[0])
 				lastEntrySeq, _ := strconv.Atoi(lastEntry[1])
+
+				if currEntry[1] == "*" {
+					if lastEntryTime == currEntryTime {
+
+						buff[2] = fmt.Sprintf("%d-%d", lastEntryTime, lastEntrySeq+1)
+					} else {
+						if currEntryTime == 0 {
+							buff[2] = fmt.Sprintf("%d-%d", currEntryTime, 1)
+						} else {
+							buff[2] = fmt.Sprintf("%d-%d", currEntryTime, 0)
+						}
+					}
+					currEntry = strings.Split(buff[2], "-")
+					currEntryTime, _ = strconv.Atoi(currEntry[0])
+				}
+
 				currEntrySeq, _ := strconv.Atoi(currEntry[1])
-				if currEntrySeq < 1 {
+				if currEntryTime < 1 && currEntrySeq < 1 {
 					res = []byte("-ERR The ID specified in XADD must be greater than 0-0\r\n")
 					break
 				}
@@ -280,6 +297,11 @@ func (kv *KVStore) HandleConnection(conn net.Conn, parser *resp.Parser) {
 				if lastEntryTime == currEntryTime && lastEntrySeq >= currEntrySeq {
 					res = []byte("-ERR The ID specified in XADD is equal or smaller than the target stream top item\r\n")
 					break
+				}
+			} else {
+				currEntry := strings.Split(buff[2], "-")
+				if currEntry[1] == "*" {
+					buff[2] = "0-1"
 				}
 			}
 			se := StreamEntry{
