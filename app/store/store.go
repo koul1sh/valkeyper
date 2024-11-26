@@ -260,6 +260,9 @@ func (kv *KVStore) HandleConnection(conn net.Conn, parser *resp.Parser) {
 				}
 			}
 		case "XADD":
+			if buff[2] == "*" {
+				buff[2] = fmt.Sprintf("%d-%d", time.Now().UnixMilli(), 0)
+			}
 			if len(kv.Stream[buff[1]]) > 0 {
 
 				fmt.Println("yes", buff[3])
