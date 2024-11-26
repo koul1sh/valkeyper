@@ -28,9 +28,10 @@ type Info struct {
 }
 
 type KVStore struct {
-	Info  Info
-	store map[string]string
-	// Connections chan net.Conn
+	Info           Info
+	store          map[string]string
+	AckCh          chan int
+	ProcessedWrite bool
 }
 
 func (kv *KVStore) Set(key, value string, expiry int) {
@@ -54,6 +55,7 @@ func New() *KVStore {
 		},
 		store: make(map[string]string),
 		// Connections: make(chan net.Conn),
+		AckCh: make(chan int),
 	}
 }
 
@@ -121,106 +123,141 @@ func (kv *KVStore) HandleConnection(conn net.Conn, parser *resp.Parser) {
 			continue
 		}
 		var res []byte = []byte{}
-		if len(buff) > 0 {
-			switch buff[0] {
-			case "PING":
-				res = []byte("+PONG\r\n")
-			case "ECHO":
-				msg := buff[1]
-				res = []byte(fmt.Sprintf("$%d\r\n%s\r\n", len(msg), msg))
+		switch buff[0] {
+		case "PING":
+			res = []byte("+PONG\r\n")
+		case "ECHO":
+			msg := buff[1]
+			res = []byte(fmt.Sprintf("$%d\r\n%s\r\n", len(msg), msg))
 
-			case "SET":
+		case "SET":
 
-				key := buff[1]
-				val := buff[2]
-				fmt.Println(kv.Info.Role, key, val)
-				ex := -1
-				if len(buff) > 4 {
-					ex, err = strconv.Atoi(buff[4])
-					if err != nil {
-						panic(err)
-					}
-				}
-				kv.Set(key, val, ex)
-				if kv.Info.MasterConn != conn {
-					res = []byte("+OK\r\n")
-				}
-				for _, slave := range kv.Info.slaves {
-					slave.Write(resp.ToArray(buff))
-				}
-			case "GET":
-				key := buff[1]
-				val, ok := kv.store[key]
-				if !ok {
-					res = []byte("$-1\r\n")
-				} else {
-					res = []byte(fmt.Sprintf("$%d\r\n%s\r\n", len(val), val))
-				}
-			case "CONFIG":
-				if len(buff) > 2 && buff[1] == "GET" {
-					key := buff[2]
-					val, ok := kv.Info.flags[key]
-					if ok {
-						res = resp.ToArray([]string{key, val})
-					}
-				} else {
-					fmt.Println("key not found in config")
-				}
-
-			case "KEYS":
-				keys := []string{}
-
-				for k := range kv.store {
-					keys = append(keys, k)
-				}
-				res = resp.ToArray(keys)
-			case "INFO":
-				info := []string{
-					fmt.Sprintf("role:%s", kv.Info.Role),
-					fmt.Sprintf("master_replid:%s", kv.Info.MasterReplId),
-					fmt.Sprintf("master_repl_offset:%d", kv.Info.MasterReplOffSet),
-				}
-				res = []byte(toBulkFromArr(info))
-			case "REPLCONF":
-				switch buff[1] {
-				case "GETACK":
-					res = resp.ToArray([]string{"REPLCONF", "ACK", fmt.Sprintf("%d", kv.Info.MasterReplOffSet)})
-				default:
-					res = []byte("+OK\r\n")
-				}
-			case "PSYNC":
-				fmt.Println(kv.Info.MasterReplId)
-				fmt.Println(kv.Info.MasterReplOffSet)
-				res = []byte(fmt.Sprintf("+FULLRESYNC %s %d\r\n", kv.Info.MasterReplId, kv.Info.MasterReplOffSet))
-
-				rdbFile, err := hex.DecodeString("524544495330303131fa0972656469732d76657205372e322e30fa0a72656469732d62697473c040fa056374696d65c26d08bc65fa08757365642d6d656dc2b0c41000fa08616f662d62617365c000fff06e3bfec0ff5aa2")
+			key := buff[1]
+			val := buff[2]
+			fmt.Println(kv.Info.Role, key, val)
+			ex := -1
+			if len(buff) > 4 {
+				ex, err = strconv.Atoi(buff[4])
 				if err != nil {
 					panic(err)
 				}
+			}
+			kv.Set(key, val, ex)
+			if kv.Info.MasterConn != conn {
+				res = []byte("+OK\r\n")
+				conn.Write(res)
 
-				tmp := append([]byte(fmt.Sprintf("$%d\r\n", len(rdbFile))), rdbFile...)
-				res = append(res, tmp...)
-				kv.Info.slaves = append(kv.Info.slaves, conn)
-			case "WAIT":
-				conn.Write([]byte(fmt.Sprintf(":%d\r\n", len(kv.Info.slaves))))
 			}
 
-			if kv.Info.Role == "slave" {
+			if kv.Info.Role == "master" {
+				for _, slave := range kv.Info.slaves {
+					slave.Write(resp.ToArray(buff))
+				}
+			}
+		case "GET":
+			key := buff[1]
+			val, ok := kv.store[key]
+			if !ok {
+				res = []byte("$-1\r\n")
+			} else {
+				res = []byte(fmt.Sprintf("$%d\r\n%s\r\n", len(val), val))
+			}
+		case "CONFIG":
+			if len(buff) > 2 && buff[1] == "GET" {
+				key := buff[2]
+				val, ok := kv.Info.flags[key]
+				if ok {
+					res = resp.ToArray([]string{key, val})
+				}
+			} else {
+				fmt.Println("key not found in config")
+			}
 
-				if conn == kv.Info.MasterConn {
-					if buff[0] == "REPLCONF" && buff[1] == "GETACK" {
-						conn.Write(res)
-					}
-				} else {
+		case "KEYS":
+			keys := []string{}
+
+			for k := range kv.store {
+				keys = append(keys, k)
+			}
+			res = resp.ToArray(keys)
+		case "INFO":
+			info := []string{
+				fmt.Sprintf("role:%s", kv.Info.Role),
+				fmt.Sprintf("master_replid:%s", kv.Info.MasterReplId),
+				fmt.Sprintf("master_repl_offset:%d", kv.Info.MasterReplOffSet),
+			}
+			res = []byte(toBulkFromArr(info))
+		case "REPLCONF":
+			switch buff[1] {
+			case "GETACK":
+				res = resp.ToArray([]string{"REPLCONF", "ACK", fmt.Sprintf("%d", kv.Info.MasterReplOffSet)})
+			case "ACK":
+				kv.AckCh <- 1
+				fmt.Println("ack")
+				continue
+			default:
+				res = []byte("+OK\r\n")
+			}
+		case "PSYNC":
+			fmt.Println(kv.Info.MasterReplId)
+			fmt.Println(kv.Info.MasterReplOffSet)
+			res = []byte(fmt.Sprintf("+FULLRESYNC %s %d\r\n", kv.Info.MasterReplId, kv.Info.MasterReplOffSet))
+
+			rdbFile, err := hex.DecodeString("524544495330303131fa0972656469732d76657205372e322e30fa0a72656469732d62697473c040fa056374696d65c26d08bc65fa08757365642d6d656dc2b0c41000fa08616f662d62617365c000fff06e3bfec0ff5aa2")
+			if err != nil {
+				panic(err)
+			}
+
+			tmp := append([]byte(fmt.Sprintf("$%d\r\n", len(rdbFile))), rdbFile...)
+			res = append(res, tmp...)
+			kv.Info.slaves = append(kv.Info.slaves, conn)
+			fmt.Println(kv.Info.slaves)
+		case "WAIT":
+			reqRepl, _ := strconv.Atoi(buff[1])
+			timeout, _ := strconv.Atoi(buff[2])
+
+			if len(kv.store) == 0 {
+				res = resp.ToInt(len(kv.Info.slaves))
+				break
+			}
+			for _, slave := range kv.Info.slaves {
+				go func() {
+					slave.Write(resp.ToArray([]string{"REPLCONF", "GETACK", "*"}))
+				}()
+			}
+			acks := 0
+			timeoutCh := time.After(time.Duration(timeout) * time.Millisecond)
+		loop:
+			for acks < reqRepl {
+				select {
+				case <-kv.AckCh:
+					acks++
+					fmt.Println("acks", acks)
+				case <-timeoutCh:
+					break loop
+				}
+			}
+			res = []byte(fmt.Sprintf(":%d\r\n", acks))
+
+		}
+		if kv.Info.Role == "slave" {
+
+			if conn == kv.Info.MasterConn {
+				if buff[0] == "REPLCONF" && buff[1] == "GETACK" {
 					conn.Write(res)
 				}
-
-				kv.Info.MasterReplOffSet += len(resp.ToArray(buff))
 			} else {
 				conn.Write(res)
 			}
 
+			kv.Info.MasterReplOffSet += len(resp.ToArray(buff))
+		} else {
+			if buff[0] != "SET" {
+
+				conn.Write(res)
+			}
 		}
+
 	}
 }
 

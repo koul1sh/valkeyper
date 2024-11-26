@@ -166,3 +166,7 @@ func ToArray(arr []string) []byte {
 	}
 	return []byte(sb.String())
 }
+
+func ToInt(num int) []byte {
+	return []byte(fmt.Sprintf(":%d\r\n", num))
+}
