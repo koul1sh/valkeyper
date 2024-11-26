@@ -27,11 +27,17 @@ type Info struct {
 	flags            map[string]string
 }
 
+type StreamEntry struct {
+	Id   string
+	Pair map[string]string
+}
+
 type KVStore struct {
 	Info           Info
 	store          map[string]string
 	AckCh          chan int
 	ProcessedWrite bool
+	Stream         map[string][]StreamEntry
 }
 
 func (kv *KVStore) Set(key, value string, expiry int) {
@@ -46,6 +52,7 @@ func (kv *KVStore) Set(key, value string, expiry int) {
 }
 
 func New() *KVStore {
+
 	return &KVStore{
 		Info: Info{
 			Role:             "master",
@@ -55,7 +62,8 @@ func New() *KVStore {
 		},
 		store: make(map[string]string),
 		// Connections: make(chan net.Conn),
-		AckCh: make(chan int),
+		AckCh:  make(chan int),
+		Stream: make(map[string][]StreamEntry),
 	}
 }
 
@@ -244,8 +252,29 @@ func (kv *KVStore) HandleConnection(conn net.Conn, parser *resp.Parser) {
 			if ok {
 				res = []byte("+string\r\n")
 			} else {
-				res = []byte("+none\r\n")
+				_, ok2 := kv.Stream[buff[1]]
+				if ok2 {
+					res = []byte("+stream\r\n")
+				} else {
+					res = []byte("+none\r\n")
+				}
 			}
+		case "XADD":
+			se := StreamEntry{
+				Id:   buff[2],
+				Pair: map[string]string{},
+			}
+			for i := 3; i < len(buff); i += 2 {
+				se.Pair[buff[i]] = buff[i+1]
+			}
+			_, ok := kv.Stream[buff[1]]
+			if ok {
+				kv.Stream[buff[1]] = append(kv.Stream[buff[1]], se)
+			} else {
+				kv.Stream[buff[1]] = []StreamEntry{se}
+			}
+			res = []byte(resp.ToBulkString(buff[2]))
+
 		}
 		if kv.Info.Role == "slave" {
 
@@ -281,13 +310,6 @@ func toBulkFromArr(arr []string) string {
 	return fmt.Sprintf("$%d\r\n%s", total, buff)
 
 }
-
-// func (kv *KVStore) HandleConections() {
-// 	for {
-// 		conn := <-kv.Connections
-// 		go kv.HandleConnection(conn)
-// 	}
-// }
 
 func (kv *KVStore) SendHandshake(master net.Conn, rdr *resp.Parser) {
 
