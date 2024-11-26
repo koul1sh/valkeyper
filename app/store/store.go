@@ -239,6 +239,13 @@ func (kv *KVStore) HandleConnection(conn net.Conn, parser *resp.Parser) {
 			}
 			res = []byte(fmt.Sprintf(":%d\r\n", acks))
 
+		case "TYPE":
+			_, ok := kv.store[buff[1]]
+			if ok {
+				res = []byte("+string\r\n")
+			} else {
+				res = []byte("+none\r\n")
+			}
 		}
 		if kv.Info.Role == "slave" {
 
