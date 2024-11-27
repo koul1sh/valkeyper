@@ -167,6 +167,17 @@ func ToArray(arr []string) []byte {
 	return []byte(sb.String())
 }
 
+func ToArrayAnyType(arr []string) []byte {
+
+	sb := strings.Builder{}
+	tmp := fmt.Sprintf("*%d\r\n", len(arr))
+	sb.WriteString(tmp)
+	for _, ele := range arr {
+		sb.WriteString(ele)
+	}
+	return []byte(sb.String())
+}
+
 func ToInt(num int) []byte {
 	return []byte(fmt.Sprintf(":%d\r\n", num))
 }

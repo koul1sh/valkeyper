@@ -131,7 +131,7 @@ func (kv *KVStore) HandleConnection(conn net.Conn, parser *resp.Parser) {
 			continue
 		}
 		var res []byte = []byte{}
-		switch buff[0] {
+		switch strings.ToUpper(buff[0]) {
 		case "PING":
 			res = []byte("+PONG\r\n")
 		case "ECHO":
@@ -322,6 +322,45 @@ func (kv *KVStore) HandleConnection(conn net.Conn, parser *resp.Parser) {
 			}
 			res = []byte(resp.ToBulkString(buff[2]))
 
+		case "XRANGE":
+			key := buff[1]
+			start := strings.Split(buff[2], "-")
+			end := strings.Split(buff[3], "-")
+
+			startTime, _ := strconv.Atoi(start[0])
+			endTime, _ := strconv.Atoi(end[0])
+			startSeq := 0
+			endSeq := -1
+
+			if len(start) > 1 {
+				startSeq, _ = strconv.Atoi(start[1])
+			}
+			if len(end) > 1 {
+				endSeq, _ = strconv.Atoi(end[1])
+			}
+			fmt.Println(startTime, " ", endTime, " ", startSeq, " ", endSeq)
+
+			fin := []string{}
+
+			for _, se := range kv.Stream[key] {
+				curr := strings.Split(se.Id, "-")
+				currTime, _ := strconv.Atoi(curr[0])
+				currSeq, _ := strconv.Atoi(curr[1])
+				if currTime >= startTime && currSeq >= startSeq && currTime <= endTime && currSeq <= endSeq {
+					fmt.Println(se)
+					currArr := []string{resp.ToBulkString(se.Id)}
+					tmp := []string{}
+					for k, v := range se.Pair {
+						tmp = append(tmp, k)
+						tmp = append(tmp, v)
+					}
+					currArr = append(currArr, string(resp.ToArray(tmp)))
+					fin = append(fin, string(resp.ToArrayAnyType(currArr)))
+				}
+
+			}
+			res = resp.ToArrayAnyType(fin)
+			fmt.Println(string(res))
 		}
 		if kv.Info.Role == "slave" {
 
