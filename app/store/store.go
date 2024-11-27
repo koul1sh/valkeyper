@@ -4,6 +4,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"os"
 	"path"
@@ -325,6 +326,9 @@ func (kv *KVStore) HandleConnection(conn net.Conn, parser *resp.Parser) {
 		case "XRANGE":
 			key := buff[1]
 			start := strings.Split(buff[2], "-")
+			if buff[3] == "+" {
+				buff[3] = fmt.Sprintf("%d-%d", math.MaxInt64, math.MaxInt64)
+			}
 			end := strings.Split(buff[3], "-")
 
 			startTime, _ := strconv.Atoi(start[0])
