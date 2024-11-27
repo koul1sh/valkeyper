@@ -38,6 +38,7 @@ type KVStore struct {
 	store          map[string]string
 	AckCh          chan int
 	ProcessedWrite bool
+	StreamXCh      chan []byte
 	Stream         map[string][]StreamEntry
 }
 
@@ -63,8 +64,9 @@ func New() *KVStore {
 		},
 		store: make(map[string]string),
 		// Connections: make(chan net.Conn),
-		AckCh:  make(chan int),
-		Stream: make(map[string][]StreamEntry),
+		AckCh:     make(chan int),
+		Stream:    make(map[string][]StreamEntry),
+		StreamXCh: make(chan []byte),
 	}
 }
 
@@ -132,6 +134,7 @@ func (kv *KVStore) HandleConnection(conn net.Conn, parser *resp.Parser) {
 			continue
 		}
 		var res []byte = []byte{}
+	switchLoop:
 		switch strings.ToUpper(buff[0]) {
 		case "PING":
 			res = []byte("+PONG\r\n")
@@ -322,7 +325,12 @@ func (kv *KVStore) HandleConnection(conn net.Conn, parser *resp.Parser) {
 				kv.Stream[buff[1]] = []StreamEntry{se}
 			}
 			res = []byte(resp.ToBulkString(buff[2]))
-
+			select {
+			case kv.StreamXCh <- res:
+				fmt.Println("someones there, sent...")
+			default:
+				fmt.Println("no one on the other side")
+			}
 		case "XRANGE":
 			key := buff[1]
 			start := strings.Split(buff[2], "-")
@@ -367,10 +375,30 @@ func (kv *KVStore) HandleConnection(conn net.Conn, parser *resp.Parser) {
 			fmt.Println(string(res))
 		case "XREAD":
 
-			args := buff[2:]
-			keys := args[:len(args)/2]
-			ids := args[len(args)/2:]
+			var args []string
+			var keys []string
+			var ids []string
+			var waitTime int
 			outer := []string{}
+			if buff[1] == "block" {
+				waitTime, _ = strconv.Atoi(buff[2])
+				args = buff[4:]
+				keys = args[:len(args)/2]
+				ids = args[len(args)/2:]
+				timeoutCh := time.After(time.Duration(waitTime) * time.Millisecond)
+				select {
+				case <-kv.StreamXCh:
+					fmt.Println("from xadd")
+				case <-timeoutCh:
+					res = []byte("$-1\r\n")
+					break switchLoop
+				}
+			} else {
+
+				args = buff[2:]
+				keys = args[:len(args)/2]
+				ids = args[len(args)/2:]
+			}
 			for i, key := range keys {
 
 				fin := []string{resp.ToBulkString(key)}
