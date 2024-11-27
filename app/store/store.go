@@ -367,35 +367,42 @@ func (kv *KVStore) HandleConnection(conn net.Conn, parser *resp.Parser) {
 			fmt.Println(string(res))
 		case "XREAD":
 
-			key := buff[2]
-			threshold := strings.Split(buff[3], "-")
-			if buff[3] == "+" {
-				buff[3] = fmt.Sprintf("%d-%d", math.MaxInt64, math.MaxInt64)
-			}
+			args := buff[2:]
+			keys := args[:len(args)/2]
+			ids := args[len(args)/2:]
+			outer := []string{}
+			for i, key := range keys {
 
-			thresholdTime, _ := strconv.Atoi(threshold[0])
-			thresholdSeq, _ := strconv.Atoi(threshold[1])
-
-			fin := []string{resp.ToBulkString(key)}
-			sub := []string{}
-			for _, se := range kv.Stream[key] {
-				curr := strings.Split(se.Id, "-")
-				currTime, _ := strconv.Atoi(curr[0])
-				currSeq, _ := strconv.Atoi(curr[1])
-				if (currTime == thresholdTime && currSeq > thresholdSeq) || (currTime > thresholdSeq) {
-					currArr := []string{resp.ToBulkString(se.Id)}
-					tmp := []string{}
-					for k, v := range se.Pair {
-						tmp = append(tmp, k)
-						tmp = append(tmp, v)
-					}
-					currArr = append(currArr, string(resp.ToArray(tmp)))
-					sub = append(sub, string(resp.ToArrayAnyType(currArr)))
+				fin := []string{resp.ToBulkString(key)}
+				threshold := strings.Split(ids[i], "-")
+				if buff[3] == "+" {
+					buff[3] = fmt.Sprintf("%d-%d", math.MaxInt64, math.MaxInt64)
 				}
 
+				thresholdTime, _ := strconv.Atoi(threshold[0])
+				thresholdSeq, _ := strconv.Atoi(threshold[1])
+
+				sub := []string{}
+				for _, se := range kv.Stream[key] {
+					curr := strings.Split(se.Id, "-")
+					currTime, _ := strconv.Atoi(curr[0])
+					currSeq, _ := strconv.Atoi(curr[1])
+					if (currTime == thresholdTime && currSeq > thresholdSeq) || (currTime > thresholdSeq) {
+						currArr := []string{resp.ToBulkString(se.Id)}
+						tmp := []string{}
+						for k, v := range se.Pair {
+							tmp = append(tmp, k)
+							tmp = append(tmp, v)
+						}
+						currArr = append(currArr, string(resp.ToArray(tmp)))
+						sub = append(sub, string(resp.ToArrayAnyType(currArr)))
+					}
+
+				}
+				fin = append(fin, string(resp.ToArrayAnyType(sub)))
+				outer = append(outer, string(resp.ToArrayAnyType(fin)))
 			}
-			fin = append(fin, string(resp.ToArrayAnyType(sub)))
-			res = resp.ToArrayAnyType([]string{string(resp.ToArrayAnyType(fin))})
+			res = resp.ToArrayAnyType(outer)
 			fmt.Println(string(res))
 		}
 		if kv.Info.Role == "slave" {
