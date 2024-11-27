@@ -386,12 +386,19 @@ func (kv *KVStore) HandleConnection(conn net.Conn, parser *resp.Parser) {
 				keys = args[:len(args)/2]
 				ids = args[len(args)/2:]
 				timeoutCh := time.After(time.Duration(waitTime) * time.Millisecond)
-				select {
-				case <-kv.StreamXCh:
+				if waitTime != 0 {
+
+					select {
+					case <-kv.StreamXCh:
+						fmt.Println("from xadd")
+					case <-timeoutCh:
+						res = []byte("$-1\r\n")
+						break switchLoop
+					}
+				} else {
+
+					<-kv.StreamXCh
 					fmt.Println("from xadd")
-				case <-timeoutCh:
-					res = []byte("$-1\r\n")
-					break switchLoop
 				}
 			} else {
 
