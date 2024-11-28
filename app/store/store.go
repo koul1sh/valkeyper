@@ -454,11 +454,17 @@ func (kv *KVStore) HandleConnection(conn net.Conn, parser *resp.Parser) {
 			res = resp.ToArrayAnyType(outer)
 			fmt.Println(string(res))
 		case "INCR":
-			val, err := strconv.Atoi(kv.store[buff[1]])
-			if err == nil {
-				kv.store[buff[1]] = fmt.Sprintf("%d", val+1)
-				res = []byte(fmt.Sprintf(":%s\r\n", kv.store[buff[1]]))
+			v, ok := kv.store[buff[1]]
+			if !ok {
+				kv.store[buff[1]] = "1"
+
+			} else {
+				val, err := strconv.Atoi(v)
+				if err == nil {
+					kv.store[buff[1]] = fmt.Sprintf("%d", val+1)
+				}
 			}
+			res = []byte(fmt.Sprintf(":%s\r\n", kv.store[buff[1]]))
 		}
 		if kv.Info.Role == "slave" {
 
