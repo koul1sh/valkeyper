@@ -19,7 +19,7 @@ import (
 type Connection struct {
 	Conn       net.Conn
 	TxnStarted bool
-	TxnQueue   []string
+	TxnQueue   [][]string
 }
 
 type Info struct {
@@ -140,352 +140,14 @@ func (kv *KVStore) HandleConnection(connection Connection, parser *resp.Parser) 
 			continue
 		}
 		var res []byte = []byte{}
-	switchLoop:
-		switch strings.ToUpper(buff[0]) {
-		case "PING":
-			res = []byte("+PONG\r\n")
-		case "ECHO":
-			msg := buff[1]
-			res = []byte(fmt.Sprintf("$%d\r\n%s\r\n", len(msg), msg))
-
-		case "SET":
-
-			key := buff[1]
-			val := buff[2]
-			fmt.Println(kv.Info.Role, key, val)
-			ex := -1
-			if len(buff) > 4 {
-				ex, err = strconv.Atoi(buff[4])
-				if err != nil {
-					panic(err)
-				}
-			}
-			kv.Set(key, val, ex)
-			if kv.Info.MasterConn != connection.Conn {
-				res = []byte("+OK\r\n")
-				connection.Conn.Write(res)
-
-			}
-
-			if kv.Info.Role == "master" {
-				for _, slave := range kv.Info.slaves {
-					slave.Write(resp.ToArray(buff))
-				}
-			}
-		case "GET":
-			key := buff[1]
-			val, ok := kv.store[key]
-			if !ok {
-				res = []byte("$-1\r\n")
-			} else {
-				res = []byte(fmt.Sprintf("$%d\r\n%s\r\n", len(val), val))
-			}
-		case "CONFIG":
-			if len(buff) > 2 && buff[1] == "GET" {
-				key := buff[2]
-				val, ok := kv.Info.flags[key]
-				if ok {
-					res = resp.ToArray([]string{key, val})
-				}
-			} else {
-				fmt.Println("key not found in config")
-			}
-
-		case "KEYS":
-			keys := []string{}
-
-			for k := range kv.store {
-				keys = append(keys, k)
-			}
-			res = resp.ToArray(keys)
-		case "INFO":
-			info := []string{
-				fmt.Sprintf("role:%s", kv.Info.Role),
-				fmt.Sprintf("master_replid:%s", kv.Info.MasterReplId),
-				fmt.Sprintf("master_repl_offset:%d", kv.Info.MasterReplOffSet),
-			}
-			res = []byte(toBulkFromArr(info))
-		case "REPLCONF":
-			switch buff[1] {
-			case "GETACK":
-				res = resp.ToArray([]string{"REPLCONF", "ACK", fmt.Sprintf("%d", kv.Info.MasterReplOffSet)})
-			case "ACK":
-				kv.AckCh <- 1
-				fmt.Println("ack")
-				continue
-			default:
-				res = []byte("+OK\r\n")
-			}
-		case "PSYNC":
-			fmt.Println(kv.Info.MasterReplId)
-			fmt.Println(kv.Info.MasterReplOffSet)
-			res = []byte(fmt.Sprintf("+FULLRESYNC %s %d\r\n", kv.Info.MasterReplId, kv.Info.MasterReplOffSet))
-
-			rdbFile, err := hex.DecodeString("524544495330303131fa0972656469732d76657205372e322e30fa0a72656469732d62697473c040fa056374696d65c26d08bc65fa08757365642d6d656dc2b0c41000fa08616f662d62617365c000fff06e3bfec0ff5aa2")
-			if err != nil {
-				panic(err)
-			}
-
-			tmp := append([]byte(fmt.Sprintf("$%d\r\n", len(rdbFile))), rdbFile...)
-			res = append(res, tmp...)
-			kv.Info.slaves = append(kv.Info.slaves, connection.Conn)
-			fmt.Println(kv.Info.slaves)
-		case "WAIT":
-			reqRepl, _ := strconv.Atoi(buff[1])
-			timeout, _ := strconv.Atoi(buff[2])
-
-			if len(kv.store) == 0 {
-				res = resp.ToInt(len(kv.Info.slaves))
-				break
-			}
-			for _, slave := range kv.Info.slaves {
-				go func() {
-					slave.Write(resp.ToArray([]string{"REPLCONF", "GETACK", "*"}))
-				}()
-			}
-			acks := 0
-			timeoutCh := time.After(time.Duration(timeout) * time.Millisecond)
-		loop:
-			for acks < reqRepl {
-				select {
-				case <-kv.AckCh:
-					acks++
-					fmt.Println("acks", acks)
-				case <-timeoutCh:
-					break loop
-				}
-			}
-			res = []byte(fmt.Sprintf(":%d\r\n", acks))
-
-		case "TYPE":
-			_, ok := kv.store[buff[1]]
-			if ok {
-				res = []byte("+string\r\n")
-			} else {
-				_, ok2 := kv.Stream[buff[1]]
-				if ok2 {
-					res = []byte("+stream\r\n")
-				} else {
-					res = []byte("+none\r\n")
-				}
-			}
-		case "XADD":
-			if buff[2] == "*" {
-				buff[2] = fmt.Sprintf("%d-%d", time.Now().UnixMilli(), 0)
-			}
-			if len(kv.Stream[buff[1]]) > 0 {
-
-				fmt.Println("yes", buff[3])
-				lastEntry := strings.Split(kv.Stream[buff[1]][len(kv.Stream[buff[1]])-1].Id, "-")
-				currEntry := strings.Split(buff[2], "-")
-
-				lastEntryTime, _ := strconv.Atoi(lastEntry[0])
-				currEntryTime, _ := strconv.Atoi(currEntry[0])
-				lastEntrySeq, _ := strconv.Atoi(lastEntry[1])
-
-				if currEntry[1] == "*" {
-					if lastEntryTime == currEntryTime {
-
-						buff[2] = fmt.Sprintf("%d-%d", lastEntryTime, lastEntrySeq+1)
-					} else {
-						if currEntryTime == 0 {
-							buff[2] = fmt.Sprintf("%d-%d", currEntryTime, 1)
-						} else {
-							buff[2] = fmt.Sprintf("%d-%d", currEntryTime, 0)
-						}
-					}
-					currEntry = strings.Split(buff[2], "-")
-					currEntryTime, _ = strconv.Atoi(currEntry[0])
-				}
-
-				currEntrySeq, _ := strconv.Atoi(currEntry[1])
-				if currEntryTime < 1 && currEntrySeq < 1 {
-					res = []byte("-ERR The ID specified in XADD must be greater than 0-0\r\n")
-					break
-				}
-				if lastEntryTime > currEntryTime {
-					res = []byte("-ERR The ID specified in XADD is equal or smaller than the target stream top item\r\n")
-					break
-				}
-				if lastEntryTime == currEntryTime && lastEntrySeq >= currEntrySeq {
-					res = []byte("-ERR The ID specified in XADD is equal or smaller than the target stream top item\r\n")
-					break
-				}
-			} else {
-				currEntry := strings.Split(buff[2], "-")
-				if currEntry[1] == "*" {
-					buff[2] = "0-1"
-				}
-			}
-			se := StreamEntry{
-				Id:   buff[2],
-				Pair: map[string]string{},
-			}
-			for i := 3; i < len(buff); i += 2 {
-				se.Pair[buff[i]] = buff[i+1]
-			}
-			_, ok := kv.Stream[buff[1]]
-			if ok {
-				kv.Stream[buff[1]] = append(kv.Stream[buff[1]], se)
-			} else {
-				kv.Stream[buff[1]] = []StreamEntry{se}
-			}
-			res = []byte(resp.ToBulkString(buff[2]))
-			select {
-			case kv.StreamXCh <- res:
-				fmt.Println("someones there, sent...")
-			default:
-				fmt.Println("no one on the other side")
-			}
-		case "XRANGE":
-			key := buff[1]
-			start := strings.Split(buff[2], "-")
-			if buff[3] == "+" {
-				buff[3] = fmt.Sprintf("%d-%d", math.MaxInt64, math.MaxInt64)
-			}
-			end := strings.Split(buff[3], "-")
-
-			startTime, _ := strconv.Atoi(start[0])
-			endTime, _ := strconv.Atoi(end[0])
-			startSeq := 0
-			endSeq := -1
-
-			if len(start) > 1 {
-				startSeq, _ = strconv.Atoi(start[1])
-			}
-			if len(end) > 1 {
-				endSeq, _ = strconv.Atoi(end[1])
-			}
-			fmt.Println(startTime, " ", endTime, " ", startSeq, " ", endSeq)
-
-			fin := []string{}
-
-			for _, se := range kv.Stream[key] {
-				curr := strings.Split(se.Id, "-")
-				currTime, _ := strconv.Atoi(curr[0])
-				currSeq, _ := strconv.Atoi(curr[1])
-				if currTime >= startTime && currSeq >= startSeq && currTime <= endTime && currSeq <= endSeq {
-					fmt.Println(se)
-					currArr := []string{resp.ToBulkString(se.Id)}
-					tmp := []string{}
-					for k, v := range se.Pair {
-						tmp = append(tmp, k)
-						tmp = append(tmp, v)
-					}
-					currArr = append(currArr, string(resp.ToArray(tmp)))
-					fin = append(fin, string(resp.ToArrayAnyType(currArr)))
-				}
-
-			}
-			res = resp.ToArrayAnyType(fin)
-			fmt.Println(string(res))
-		case "XREAD":
-
-			var args []string
-			var keys []string
-			var ids []string
-			var waitTime int
-			outer := []string{}
-			if buff[1] == "block" {
-				waitTime, _ = strconv.Atoi(buff[2])
-				args = buff[4:]
-				keys = args[:len(args)/2]
-				ids = args[len(args)/2:]
-				timeoutCh := time.After(time.Duration(waitTime) * time.Millisecond)
-				if waitTime != 0 {
-
-					select {
-					case <-kv.StreamXCh:
-						fmt.Println("from xadd")
-					case <-timeoutCh:
-						res = []byte("$-1\r\n")
-						break switchLoop
-					}
-				} else {
-
-					<-kv.StreamXCh
-					fmt.Println("from xadd")
-				}
-			} else {
-
-				args = buff[2:]
-				keys = args[:len(args)/2]
-				ids = args[len(args)/2:]
-			}
-
-			for i, key := range keys {
-
-				fin := []string{resp.ToBulkString(key)}
-				if buff[3] == "+" {
-					buff[3] = fmt.Sprintf("%d-%d", math.MaxInt64, math.MaxInt64)
-				}
-
-				sub := []string{}
-				if ids[i] == "$" {
-					se := kv.Stream[key][len(kv.Stream[key])-1]
-
-					currArr := []string{resp.ToBulkString(se.Id)}
-					tmp := []string{}
-					for k, v := range se.Pair {
-						tmp = append(tmp, k)
-						tmp = append(tmp, v)
-					}
-					currArr = append(currArr, string(resp.ToArray(tmp)))
-					sub = append(sub, string(resp.ToArrayAnyType(currArr)))
-				} else {
-
-					threshold := strings.Split(ids[i], "-")
-					thresholdTime, _ := strconv.Atoi(threshold[0])
-					thresholdSeq, _ := strconv.Atoi(threshold[1])
-					for _, se := range kv.Stream[key] {
-						curr := strings.Split(se.Id, "-")
-						currTime, _ := strconv.Atoi(curr[0])
-						currSeq, _ := strconv.Atoi(curr[1])
-						if (currTime == thresholdTime && currSeq > thresholdSeq) || (currTime > thresholdSeq) {
-							currArr := []string{resp.ToBulkString(se.Id)}
-							tmp := []string{}
-							for k, v := range se.Pair {
-								tmp = append(tmp, k)
-								tmp = append(tmp, v)
-							}
-							currArr = append(currArr, string(resp.ToArray(tmp)))
-							sub = append(sub, string(resp.ToArrayAnyType(currArr)))
-						}
-
-					}
-				}
-				fin = append(fin, string(resp.ToArrayAnyType(sub)))
-				outer = append(outer, string(resp.ToArrayAnyType(fin)))
-			}
-			res = resp.ToArrayAnyType(outer)
-			fmt.Println(string(res))
-		case "INCR":
-			v, ok := kv.store[buff[1]]
-			if !ok {
-				kv.store[buff[1]] = "1"
-
-			} else {
-				val, err := strconv.Atoi(v)
-				if err == nil {
-					kv.store[buff[1]] = fmt.Sprintf("%d", val+1)
-				} else {
-					res = []byte("-ERR value is not an integer or out of range\r\n")
-					break
-				}
-			}
-			res = []byte(fmt.Sprintf(":%s\r\n", kv.store[buff[1]]))
-
-		case "MULTI":
-			connection.TxnStarted = true
-			res = []byte("+OK\r\n")
-		case "EXEC":
-			if connection.TxnStarted {
-				res = resp.ToArray(connection.TxnQueue)
-				connection.TxnStarted = false
-			} else {
-				res = []byte("-ERR EXEC without MULTI\r\n")
-			}
+		if connection.TxnStarted && buff[0] != "EXEC" {
+			res = []byte("+QUEUED\r\n")
+			connection.TxnQueue = append(connection.TxnQueue, buff)
+			connection.Conn.Write(res)
+			continue
 		}
+		res = kv.processCommand(buff, &connection)
+
 		if kv.Info.Role == "slave" {
 
 			if connection.Conn == kv.Info.MasterConn {
@@ -498,13 +160,364 @@ func (kv *KVStore) HandleConnection(connection Connection, parser *resp.Parser) 
 
 			kv.Info.MasterReplOffSet += len(resp.ToArray(buff))
 		} else {
-			if buff[0] != "SET" {
 
-				connection.Conn.Write(res)
+			connection.Conn.Write(res)
+
+			if buff[0] == "SET" {
+
+				for _, slave := range kv.Info.slaves {
+					slave.Write(resp.ToArray(buff))
+				}
 			}
 		}
-
 	}
+}
+func (kv *KVStore) processCommand(buff []string, connection *Connection) []byte {
+
+	res := []byte{}
+	var err error
+switchLoop:
+	switch strings.ToUpper(buff[0]) {
+	case "PING":
+		res = []byte("+PONG\r\n")
+	case "ECHO":
+		msg := buff[1]
+		res = []byte(fmt.Sprintf("$%d\r\n%s\r\n", len(msg), msg))
+
+	case "SET":
+		key := buff[1]
+		val := buff[2]
+		fmt.Println(kv.Info.Role, key, val)
+		ex := -1
+		if len(buff) > 4 {
+			ex, err = strconv.Atoi(buff[4])
+			if err != nil {
+				panic(err)
+			}
+		}
+		kv.Set(key, val, ex)
+		res = []byte("+OK\r\n")
+	case "GET":
+		key := buff[1]
+		val, ok := kv.store[key]
+		if !ok {
+			res = []byte("$-1\r\n")
+		} else {
+			res = []byte(fmt.Sprintf("$%d\r\n%s\r\n", len(val), val))
+		}
+	case "CONFIG":
+		if len(buff) > 2 && buff[1] == "GET" {
+			key := buff[2]
+			val, ok := kv.Info.flags[key]
+			if ok {
+				res = resp.ToArray([]string{key, val})
+			}
+		} else {
+			fmt.Println("key not found in config")
+		}
+
+	case "KEYS":
+		keys := []string{}
+
+		for k := range kv.store {
+			keys = append(keys, k)
+		}
+		res = resp.ToArray(keys)
+	case "INFO":
+		info := []string{
+			fmt.Sprintf("role:%s", kv.Info.Role),
+			fmt.Sprintf("master_replid:%s", kv.Info.MasterReplId),
+			fmt.Sprintf("master_repl_offset:%d", kv.Info.MasterReplOffSet),
+		}
+		res = []byte(toBulkFromArr(info))
+	case "REPLCONF":
+		switch buff[1] {
+		case "GETACK":
+			res = resp.ToArray([]string{"REPLCONF", "ACK", fmt.Sprintf("%d", kv.Info.MasterReplOffSet)})
+		case "ACK":
+			kv.AckCh <- 1
+			fmt.Println("ack")
+		default:
+			res = []byte("+OK\r\n")
+		}
+	case "PSYNC":
+		fmt.Println(kv.Info.MasterReplId)
+		fmt.Println(kv.Info.MasterReplOffSet)
+		res = []byte(fmt.Sprintf("+FULLRESYNC %s %d\r\n", kv.Info.MasterReplId, kv.Info.MasterReplOffSet))
+
+		rdbFile, err := hex.DecodeString("524544495330303131fa0972656469732d76657205372e322e30fa0a72656469732d62697473c040fa056374696d65c26d08bc65fa08757365642d6d656dc2b0c41000fa08616f662d62617365c000fff06e3bfec0ff5aa2")
+		if err != nil {
+			panic(err)
+		}
+
+		tmp := append([]byte(fmt.Sprintf("$%d\r\n", len(rdbFile))), rdbFile...)
+		res = append(res, tmp...)
+		kv.Info.slaves = append(kv.Info.slaves, connection.Conn)
+		fmt.Println(kv.Info.slaves)
+	case "WAIT":
+		reqRepl, _ := strconv.Atoi(buff[1])
+		timeout, _ := strconv.Atoi(buff[2])
+
+		if len(kv.store) == 0 {
+			res = resp.ToInt(len(kv.Info.slaves))
+			break
+		}
+		for _, slave := range kv.Info.slaves {
+			go func() {
+				slave.Write(resp.ToArray([]string{"REPLCONF", "GETACK", "*"}))
+			}()
+		}
+		acks := 0
+		timeoutCh := time.After(time.Duration(timeout) * time.Millisecond)
+	loop:
+		for acks < reqRepl {
+			select {
+			case <-kv.AckCh:
+				acks++
+				fmt.Println("acks", acks)
+			case <-timeoutCh:
+				break loop
+			}
+		}
+		res = []byte(fmt.Sprintf(":%d\r\n", acks))
+
+	case "TYPE":
+		_, ok := kv.store[buff[1]]
+		if ok {
+			res = []byte("+string\r\n")
+		} else {
+			_, ok2 := kv.Stream[buff[1]]
+			if ok2 {
+				res = []byte("+stream\r\n")
+			} else {
+				res = []byte("+none\r\n")
+			}
+		}
+	case "XADD":
+		if buff[2] == "*" {
+			buff[2] = fmt.Sprintf("%d-%d", time.Now().UnixMilli(), 0)
+		}
+		if len(kv.Stream[buff[1]]) > 0 {
+
+			fmt.Println("yes", buff[3])
+			lastEntry := strings.Split(kv.Stream[buff[1]][len(kv.Stream[buff[1]])-1].Id, "-")
+			currEntry := strings.Split(buff[2], "-")
+
+			lastEntryTime, _ := strconv.Atoi(lastEntry[0])
+			currEntryTime, _ := strconv.Atoi(currEntry[0])
+			lastEntrySeq, _ := strconv.Atoi(lastEntry[1])
+
+			if currEntry[1] == "*" {
+				if lastEntryTime == currEntryTime {
+
+					buff[2] = fmt.Sprintf("%d-%d", lastEntryTime, lastEntrySeq+1)
+				} else {
+					if currEntryTime == 0 {
+						buff[2] = fmt.Sprintf("%d-%d", currEntryTime, 1)
+					} else {
+						buff[2] = fmt.Sprintf("%d-%d", currEntryTime, 0)
+					}
+				}
+				currEntry = strings.Split(buff[2], "-")
+				currEntryTime, _ = strconv.Atoi(currEntry[0])
+			}
+
+			currEntrySeq, _ := strconv.Atoi(currEntry[1])
+			if currEntryTime < 1 && currEntrySeq < 1 {
+				res = []byte("-ERR The ID specified in XADD must be greater than 0-0\r\n")
+				break
+			}
+			if lastEntryTime > currEntryTime {
+				res = []byte("-ERR The ID specified in XADD is equal or smaller than the target stream top item\r\n")
+				break
+			}
+			if lastEntryTime == currEntryTime && lastEntrySeq >= currEntrySeq {
+				res = []byte("-ERR The ID specified in XADD is equal or smaller than the target stream top item\r\n")
+				break
+			}
+		} else {
+			currEntry := strings.Split(buff[2], "-")
+			if currEntry[1] == "*" {
+				buff[2] = "0-1"
+			}
+		}
+		se := StreamEntry{
+			Id:   buff[2],
+			Pair: map[string]string{},
+		}
+		for i := 3; i < len(buff); i += 2 {
+			se.Pair[buff[i]] = buff[i+1]
+		}
+		_, ok := kv.Stream[buff[1]]
+		if ok {
+			kv.Stream[buff[1]] = append(kv.Stream[buff[1]], se)
+		} else {
+			kv.Stream[buff[1]] = []StreamEntry{se}
+		}
+		res = []byte(resp.ToBulkString(buff[2]))
+		select {
+		case kv.StreamXCh <- res:
+			fmt.Println("someones there, sent...")
+		default:
+			fmt.Println("no one on the other side")
+		}
+	case "XRANGE":
+		key := buff[1]
+		start := strings.Split(buff[2], "-")
+		if buff[3] == "+" {
+			buff[3] = fmt.Sprintf("%d-%d", math.MaxInt64, math.MaxInt64)
+		}
+		end := strings.Split(buff[3], "-")
+
+		startTime, _ := strconv.Atoi(start[0])
+		endTime, _ := strconv.Atoi(end[0])
+		startSeq := 0
+		endSeq := -1
+
+		if len(start) > 1 {
+			startSeq, _ = strconv.Atoi(start[1])
+		}
+		if len(end) > 1 {
+			endSeq, _ = strconv.Atoi(end[1])
+		}
+		fmt.Println(startTime, " ", endTime, " ", startSeq, " ", endSeq)
+
+		fin := []string{}
+
+		for _, se := range kv.Stream[key] {
+			curr := strings.Split(se.Id, "-")
+			currTime, _ := strconv.Atoi(curr[0])
+			currSeq, _ := strconv.Atoi(curr[1])
+			if currTime >= startTime && currSeq >= startSeq && currTime <= endTime && currSeq <= endSeq {
+				fmt.Println(se)
+				currArr := []string{resp.ToBulkString(se.Id)}
+				tmp := []string{}
+				for k, v := range se.Pair {
+					tmp = append(tmp, k)
+					tmp = append(tmp, v)
+				}
+				currArr = append(currArr, string(resp.ToArray(tmp)))
+				fin = append(fin, string(resp.ToArrayAnyType(currArr)))
+			}
+
+		}
+		res = resp.ToArrayAnyType(fin)
+		fmt.Println(string(res))
+	case "XREAD":
+
+		var args []string
+		var keys []string
+		var ids []string
+		var waitTime int
+		outer := []string{}
+		if buff[1] == "block" {
+			waitTime, _ = strconv.Atoi(buff[2])
+			args = buff[4:]
+			keys = args[:len(args)/2]
+			ids = args[len(args)/2:]
+			timeoutCh := time.After(time.Duration(waitTime) * time.Millisecond)
+			if waitTime != 0 {
+
+				select {
+				case <-kv.StreamXCh:
+					fmt.Println("from xadd")
+				case <-timeoutCh:
+					res = []byte("$-1\r\n")
+					break switchLoop
+				}
+			} else {
+
+				<-kv.StreamXCh
+				fmt.Println("from xadd")
+			}
+		} else {
+
+			args = buff[2:]
+			keys = args[:len(args)/2]
+			ids = args[len(args)/2:]
+		}
+
+		for i, key := range keys {
+
+			fin := []string{resp.ToBulkString(key)}
+			if buff[3] == "+" {
+				buff[3] = fmt.Sprintf("%d-%d", math.MaxInt64, math.MaxInt64)
+			}
+
+			sub := []string{}
+			if ids[i] == "$" {
+				se := kv.Stream[key][len(kv.Stream[key])-1]
+
+				currArr := []string{resp.ToBulkString(se.Id)}
+				tmp := []string{}
+				for k, v := range se.Pair {
+					tmp = append(tmp, k)
+					tmp = append(tmp, v)
+				}
+				currArr = append(currArr, string(resp.ToArray(tmp)))
+				sub = append(sub, string(resp.ToArrayAnyType(currArr)))
+			} else {
+
+				threshold := strings.Split(ids[i], "-")
+				thresholdTime, _ := strconv.Atoi(threshold[0])
+				thresholdSeq, _ := strconv.Atoi(threshold[1])
+				for _, se := range kv.Stream[key] {
+					curr := strings.Split(se.Id, "-")
+					currTime, _ := strconv.Atoi(curr[0])
+					currSeq, _ := strconv.Atoi(curr[1])
+					if (currTime == thresholdTime && currSeq > thresholdSeq) || (currTime > thresholdSeq) {
+						currArr := []string{resp.ToBulkString(se.Id)}
+						tmp := []string{}
+						for k, v := range se.Pair {
+							tmp = append(tmp, k)
+							tmp = append(tmp, v)
+						}
+						currArr = append(currArr, string(resp.ToArray(tmp)))
+						sub = append(sub, string(resp.ToArrayAnyType(currArr)))
+					}
+
+				}
+			}
+			fin = append(fin, string(resp.ToArrayAnyType(sub)))
+			outer = append(outer, string(resp.ToArrayAnyType(fin)))
+		}
+		res = resp.ToArrayAnyType(outer)
+		fmt.Println(string(res))
+	case "INCR":
+		v, ok := kv.store[buff[1]]
+		if !ok {
+			kv.store[buff[1]] = "1"
+
+		} else {
+			val, err := strconv.Atoi(v)
+			if err == nil {
+				kv.store[buff[1]] = fmt.Sprintf("%d", val+1)
+			} else {
+				res = []byte("-ERR value is not an integer or out of range\r\n")
+				break
+			}
+		}
+		res = []byte(fmt.Sprintf(":%s\r\n", kv.store[buff[1]]))
+
+	case "MULTI":
+		connection.TxnStarted = true
+		res = []byte("+OK\r\n")
+	case "EXEC":
+		if connection.TxnStarted {
+
+			tmp := []string{}
+
+			for _, cmd := range connection.TxnQueue {
+				tmp = append(tmp, string(kv.processCommand(cmd, connection)))
+				fmt.Println(tmp)
+			}
+			res = resp.ToArrayAnyType(tmp)
+			connection.TxnStarted = false
+		} else {
+			res = []byte("-ERR EXEC without MULTI\r\n")
+		}
+	}
+	return res
 }
 
 var OP_CODES = []string{"FF", "FE", "FD", "FC", "FB", "FA"}
@@ -591,7 +604,7 @@ func (kv *KVStore) HandleReplication() {
 	connection := Connection{
 		Conn:       master,
 		TxnStarted: false,
-		TxnQueue:   []string{},
+		TxnQueue:   [][]string{},
 	}
 	go kv.HandleConnection(connection, rdr)
 }

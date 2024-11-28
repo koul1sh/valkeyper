@@ -42,7 +42,7 @@ func main() {
 		connection := store.Connection{
 			Conn:       conn,
 			TxnStarted: false,
-			TxnQueue:   []string{},
+			TxnQueue:   [][]string{},
 		}
 		rdr := resp.NewParser(conn)
 		go kvStore.HandleConnection(connection, rdr)
