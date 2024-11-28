@@ -39,9 +39,13 @@ func main() {
 		if err != nil {
 			fmt.Println("Error accepting connection: ", err.Error())
 		}
-		// kvStore.Connections <- conn
+		connection := store.Connection{
+			Conn:       conn,
+			TxnStarted: false,
+			TxnQueue:   []string{},
+		}
 		rdr := resp.NewParser(conn)
-		go kvStore.HandleConnection(conn, rdr)
+		go kvStore.HandleConnection(connection, rdr)
 	}
 
 }

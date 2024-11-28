@@ -16,6 +16,12 @@ import (
 	"github.com/codecrafters-io/redis-starter-go/app/resp"
 )
 
+type Connection struct {
+	Conn       net.Conn
+	TxnStarted bool
+	TxnQueue   []string
+}
+
 type Info struct {
 	Role             string
 	MasterIP         string
@@ -119,8 +125,8 @@ func (kv *KVStore) LoadRDB(master net.Conn) {
 
 }
 
-func (kv *KVStore) HandleConnection(conn net.Conn, parser *resp.Parser) {
-	defer conn.Close()
+func (kv *KVStore) HandleConnection(connection Connection, parser *resp.Parser) {
+	defer connection.Conn.Close()
 	for {
 		buff, err := parser.Parse()
 		if err != nil {
@@ -155,9 +161,9 @@ func (kv *KVStore) HandleConnection(conn net.Conn, parser *resp.Parser) {
 				}
 			}
 			kv.Set(key, val, ex)
-			if kv.Info.MasterConn != conn {
+			if kv.Info.MasterConn != connection.Conn {
 				res = []byte("+OK\r\n")
-				conn.Write(res)
+				connection.Conn.Write(res)
 
 			}
 
@@ -222,7 +228,7 @@ func (kv *KVStore) HandleConnection(conn net.Conn, parser *resp.Parser) {
 
 			tmp := append([]byte(fmt.Sprintf("$%d\r\n", len(rdbFile))), rdbFile...)
 			res = append(res, tmp...)
-			kv.Info.slaves = append(kv.Info.slaves, conn)
+			kv.Info.slaves = append(kv.Info.slaves, connection.Conn)
 			fmt.Println(kv.Info.slaves)
 		case "WAIT":
 			reqRepl, _ := strconv.Atoi(buff[1])
@@ -468,22 +474,33 @@ func (kv *KVStore) HandleConnection(conn net.Conn, parser *resp.Parser) {
 				}
 			}
 			res = []byte(fmt.Sprintf(":%s\r\n", kv.store[buff[1]]))
+
+		case "MULTI":
+			connection.TxnStarted = true
+			res = []byte("+OK\r\n")
+		case "EXEC":
+			if connection.TxnStarted {
+				res = resp.ToArray(connection.TxnQueue)
+				connection.TxnStarted = false
+			} else {
+				res = []byte("-ERR EXEC without MULTI\r\n")
+			}
 		}
 		if kv.Info.Role == "slave" {
 
-			if conn == kv.Info.MasterConn {
+			if connection.Conn == kv.Info.MasterConn {
 				if buff[0] == "REPLCONF" && buff[1] == "GETACK" {
-					conn.Write(res)
+					connection.Conn.Write(res)
 				}
 			} else {
-				conn.Write(res)
+				connection.Conn.Write(res)
 			}
 
 			kv.Info.MasterReplOffSet += len(resp.ToArray(buff))
 		} else {
 			if buff[0] != "SET" {
 
-				conn.Write(res)
+				connection.Conn.Write(res)
 			}
 		}
 
@@ -571,8 +588,12 @@ func (kv *KVStore) HandleReplication() {
 	rdr := resp.NewParser(master)
 	kv.SendHandshake(master, rdr)
 	kv.Info.MasterConn = master
-	// kv.Connections <- master
-	go kv.HandleConnection(master, rdr)
+	connection := Connection{
+		Conn:       master,
+		TxnStarted: false,
+		TxnQueue:   []string{},
+	}
+	go kv.HandleConnection(connection, rdr)
 }
 func (kv *KVStore) ParseCommandLine() {
 
