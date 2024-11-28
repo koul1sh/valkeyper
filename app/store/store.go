@@ -462,6 +462,9 @@ func (kv *KVStore) HandleConnection(conn net.Conn, parser *resp.Parser) {
 				val, err := strconv.Atoi(v)
 				if err == nil {
 					kv.store[buff[1]] = fmt.Sprintf("%d", val+1)
+				} else {
+					res = []byte("-ERR value is not an integer or out of range\r\n")
+					break
 				}
 			}
 			res = []byte(fmt.Sprintf(":%s\r\n", kv.store[buff[1]]))
