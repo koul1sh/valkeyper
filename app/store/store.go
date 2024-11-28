@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -139,8 +140,9 @@ func (kv *KVStore) HandleConnection(connection Connection, parser *resp.Parser) 
 		if len(buff) == 0 {
 			continue
 		}
+		txnCommands := []string{"EXEC", "DISCARD"}
 		var res []byte = []byte{}
-		if connection.TxnStarted && buff[0] != "EXEC" {
+		if connection.TxnStarted && !slices.Contains(txnCommands, buff[0]) {
 			res = []byte("+QUEUED\r\n")
 			connection.TxnQueue = append(connection.TxnQueue, buff)
 			connection.Conn.Write(res)
@@ -515,6 +517,14 @@ switchLoop:
 			connection.TxnStarted = false
 		} else {
 			res = []byte("-ERR EXEC without MULTI\r\n")
+		}
+	case "DISCARD":
+		if connection.TxnStarted {
+			connection.TxnQueue = [][]string{}
+			connection.TxnStarted = false
+			res = []byte("+OK\r\n")
+		} else {
+			res = []byte("-ERR DISCARD without MULTI\r\n")
 		}
 	}
 	return res
