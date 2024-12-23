@@ -1,33 +1,75 @@
-[![progress-banner](https://backend.codecrafters.io/progress/redis/cba180ac-3043-49aa-b293-040651bed582)](https://app.codecrafters.io/users/codecrafters-bot?r=2qF)
+# 🚀 Redis Clone
 
-This is a starting point for Go solutions to the
-["Build Your Own Redis" Challenge](https://codecrafters.io/challenges/redis).
+An in-memory key-value store written in Go that replicates core Redis functionalities. Fully compatible with `redis-cli` and supports essential features like GET, SET (with EXPIRE), persistence, replication, streams, and transactions.
 
-In this challenge, you'll build a toy Redis clone that's capable of handling
-basic commands like `PING`, `SET` and `GET`. Along the way we'll learn about
-event loops, the Redis protocol and more.
+## 📋 Features
+- **In-memory key-value store** ⚡
+- **Persistence** to disk 📀
+- **Replication** (master-slave) 🔄
+- **Streams** for event-driven data flows 📊
+- **Transactions** for atomic operations 🔐
+- **EXPIRE** support for key TTL ⏳
 
-**Note**: If you're viewing this repo on GitHub, head over to
-[codecrafters.io](https://codecrafters.io) to try the challenge.
+## 🛠️ Installation
+```bash
+# Clone the repository
+git clone https://github.com/vansh845/redis-clone.git
+cd redis-clone
 
-# Passing the first stage
+# Build the project
+go build
 
-The entry point for your Redis implementation is in `app/server.go`. Study and
-uncomment the relevant code, and push your changes to pass the first stage:
-
-```sh
-git commit -am "pass 1st stage" # any msg
-git push origin master
+# Run the server
+./redis-clone
 ```
 
-That's all!
+## 🚀 Quick Start
+```bash
+# Use redis-cli to connect
+redis-cli -p 6379
 
-# Stage 2 & beyond
+# Basic commands
+PING
+SET key1 "Hello World"
+GET key1
+EXPIRE key1 10
+```
 
-Note: This section is for stages 2 and beyond.
+## 🧩 Supported Commands
+| Command                  | Description                                    |
+|-------------------------|------------------------------------------------|
+| **SET key value**        | Set a key to a specific value                  |
+| **GET key**              | Get the value of a key                         |
+| **EXPIRE key seconds**   | Set a timeout on a key                         |
+| **DEL key**              | Delete a key                                   |
+| **INCR key**             | Increment the integer value of a key by one    |
+| **XADD stream key value**| Add an entry to a stream                       |
+| **MULTI**                | Start a transaction                            |
+| **EXEC**                 | Execute a transaction                          |
 
-1. Ensure you have `go (1.19)` installed locally
-1. Run `./your_program.sh` to run your Redis server, which is implemented in
-   `app/server.go`.
-1. Commit your changes and run `git push origin master` to submit your solution
-   to CodeCrafters. Test output will be streamed to your terminal.
+## 📡 Replication Setup
+```bash
+# Start master server
+./redis-clone --port 6379
+
+# Start slave server
+./redis-clone --port 6380 --replicaof 127.0.0.1 6379
+```
+
+## 💾 Persistence
+Currently it only supports parsing and loading RDB file. Does not take snapshots ( will be added in future).
+
+## 🚦 Transactions
+Ensure atomicity of commands by using `MULTI` and `EXEC`.
+```bash
+redis-cli
+> MULTI
+> SET balance 100
+> INCR balance
+> EXEC
+```
+
+## 📚 Contributing
+Feel free to open issues or submit pull requests! All contributions are welcome.
+
+
