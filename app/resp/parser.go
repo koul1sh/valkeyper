@@ -129,10 +129,8 @@ func (p *Parser) ParseArray() ([]string, error) {
 func (p *Parser) Parse() ([]string, error) {
 	iden, err := p.ReadByte()
 	if err != nil {
-		fmt.Println("no first byte")
 		return nil, err
 	}
-	fmt.Println(string(iden))
 	res := []string{}
 	switch string(iden) {
 

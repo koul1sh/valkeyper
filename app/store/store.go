@@ -136,7 +136,6 @@ func (kv *KVStore) HandleConnection(connection Connection, parser *resp.Parser) 
 			}
 			panic("Error parsing : " + err.Error())
 		}
-		fmt.Println(buff)
 		if len(buff) == 0 {
 			continue
 		}
@@ -189,7 +188,6 @@ switchLoop:
 	case "SET":
 		key := buff[1]
 		val := buff[2]
-		fmt.Println(kv.Info.Role, key, val)
 		ex := -1
 		if len(buff) > 4 {
 			ex, err = strconv.Atoi(buff[4])
@@ -656,5 +654,4 @@ func (kv *KVStore) ParseCommandLine() {
 		}
 	}
 	kv.Info.flags = flags
-	fmt.Println(flags)
 }
