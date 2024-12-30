@@ -161,8 +161,11 @@ func (kv *KVStore) HandleConnection(connection Connection, parser *resp.Parser) 
 
 			kv.Info.MasterReplOffSet += len(resp.ToArray(buff))
 		} else {
+
 			connection.Conn.Write(res)
-			if strings.ToUpper(buff[0]) == "SET" {
+
+			if buff[0] == "SET" {
+
 				for _, slave := range kv.Info.slaves {
 					slave.Write(resp.ToArray(buff))
 				}
@@ -192,6 +195,7 @@ switchLoop:
 				panic(err)
 			}
 		}
+		fmt.Println(kv.Info.Role, key, val)
 		kv.Set(key, val, ex)
 		res = []byte("+OK\r\n")
 	case "GET":
