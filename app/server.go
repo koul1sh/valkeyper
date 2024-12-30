@@ -10,14 +10,11 @@ import (
 )
 
 func main() {
-	fmt.Println("Logs from your program will appear here!")
 
 	kvStore := store.New()
 	kvStore.ParseCommandLine()
 
 	// go kvStore.HandleConections()
-
-	fmt.Println(kvStore)
 
 	if kvStore.Info.Role == "slave" {
 		fmt.Println("connecting to master by slave node")
