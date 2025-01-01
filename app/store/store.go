@@ -43,6 +43,7 @@ type StreamEntry struct {
 type KVStore struct {
 	Info           Info
 	store          map[string]string
+	expiryMap      map[string]chan int
 	AckCh          chan int
 	ProcessedWrite bool
 	StreamXCh      chan []byte
@@ -69,8 +70,8 @@ func New() *KVStore {
 			MasterReplOffSet: 0,
 			Port:             "6379",
 		},
-		store: make(map[string]string),
-		// Connections: make(chan net.Conn),
+		store:     make(map[string]string),
+		expiryMap: make(map[string]chan int),
 		AckCh:     make(chan int),
 		Stream:    make(map[string][]StreamEntry),
 		StreamXCh: make(chan []byte),
@@ -91,8 +92,16 @@ func (kv *KVStore) LoadFromRDB(rdb *rdb.RDB) {
 }
 
 func (kv *KVStore) handleExpiry(timeout <-chan time.Time, key string) {
-	<-timeout
-	delete(kv.store, key)
+	closeCh := make(chan int)
+	kv.expiryMap[key] = closeCh
+	for {
+		select {
+		case <-closeCh:
+			return
+		case <-timeout:
+			delete(kv.store, key)
+		}
+	}
 }
 
 func (kv *KVStore) LoadRDB(master net.Conn) {
@@ -181,7 +190,22 @@ switchLoop:
 	case "ECHO":
 		msg := buff[1]
 		res = []byte(fmt.Sprintf("$%d\r\n%s\r\n", len(msg), msg))
+	case "DEL":
 
+		key := buff[1]
+		_, ok := kv.store[key]
+		if !ok {
+			res = []byte(":0\r\n")
+			break switchLoop
+		}
+		delete(kv.store, key)
+
+		ch, ok := kv.expiryMap[key]
+		if ok {
+			ch <- 1
+		}
+
+		res = []byte(":1\r\n")
 	case "SET":
 		key := buff[1]
 		val := buff[2]
