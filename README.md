@@ -1,4 +1,4 @@
-# 🚀 Redis Clone
+# 🚀 ValKeyper
 
 An in-memory key-value store written in Go that replicates core Redis functionalities. Fully compatible with `redis-cli` and supports essential features like GET, SET (with EXPIRE), persistence, replication, streams, and transactions.
 
@@ -13,14 +13,14 @@ An in-memory key-value store written in Go that replicates core Redis functional
 ## 🛠️ Installation
 ```bash
 # Clone the repository
-git clone https://github.com/vansh845/redis-clone.git
-cd redis-clone
+git clone https://github.com/vansh845/valkeyper.git
+cd valkeyper
 
 # Build the project
 go build
 
 # Run the server
-./redis-clone
+./valkeyper
 ```
 
 ## 🚀 Quick Start
@@ -50,10 +50,10 @@ EXPIRE key1 10
 ## 📡 Replication Setup
 ```bash
 # Start master server
-./redis-clone --port 6379
+./valkeyper --port 6379
 
 # Start slave server
-./redis-clone --port 6380 --replicaof "127.0.0.1 6379"
+./valkeyper --port 6380 --replicaof "127.0.0.1 6379"
 ```
 
 ## 💾 Persistence
