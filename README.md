@@ -1,8 +1,8 @@
-# 🚀 ValKeyper
+# ValKeyper
 
 An in-memory key-value store written in Go that replicates core Redis functionalities. Fully compatible with `redis-cli` and supports essential features like GET, SET (with EXPIRE), persistence, replication, streams, and transactions.
 
-## 📋 Features
+## Features
 - **In-memory key-value store**
 - **Persistence** to disk
 - **Replication** (master-slave)
@@ -10,7 +10,7 @@ An in-memory key-value store written in Go that replicates core Redis functional
 - **Transactions** for atomic operations 
 - **EXPIRE** support for key TTL 
 
-## 🛠️ Installation
+## Installation
 ```bash
 # Clone the repository
 git clone https://github.com/vansh845/valkeyper.git
@@ -23,7 +23,7 @@ go build
 ./valkeyper
 ```
 
-## 🚀 Quick Start
+## Quick Start
 ```bash
 # Use redis-cli to connect
 redis-cli -p 6379
@@ -35,7 +35,7 @@ GET key1
 EXPIRE key1 10
 ```
 
-## 🧩 Supported Commands
+## Supported Commands
 | Command                  | Description                                    |
 |-------------------------|------------------------------------------------|
 | **SET key value**        | Set a key to a specific value                  |
@@ -47,7 +47,7 @@ EXPIRE key1 10
 | **MULTI**                | Start a transaction                            |
 | **EXEC**                 | Execute a transaction                          |
 
-## 📡 Replication Setup
+## Replication Setup
 ```bash
 # Start master server
 ./valkeyper --port 6379
@@ -56,10 +56,10 @@ EXPIRE key1 10
 ./valkeyper --port 6380 --replicaof "127.0.0.1 6379"
 ```
 
-## 💾 Persistence
+## Persistence
 Currently it only supports parsing and loading RDB file. Does not take snapshots ( will be added in future).
 
-## 🚦 Transactions
+## Transactions
 Ensure atomicity of commands by using `MULTI` and `EXEC`.
 ```bash
 redis-cli
@@ -69,7 +69,7 @@ redis-cli
 > EXEC
 ```
 
-## 📚 Contributing
+## Contributing
 Feel free to open issues or submit pull requests! All contributions are welcome.
 
 
